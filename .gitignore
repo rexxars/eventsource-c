@@ -1,0 +1,8 @@
+build/
+*.o
+.DS_Store
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+.superpowers/
