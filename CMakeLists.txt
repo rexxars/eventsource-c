@@ -16,9 +16,16 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 option(SSE_BUILD_TESTS "Build host tests" ON)
 option(SSE_SANITIZE "Build with ASan/UBSan" ON)
 
+if(APPLE)
+  # ASan-instrumented binaries hang for minutes at startup with Apple
+  # clang 17 on macOS 26; UBSan alone stays fast. CI runs the full pair.
+  set(SSE_SANITIZERS "undefined" CACHE STRING "Sanitizers when SSE_SANITIZE is ON")
+else()
+  set(SSE_SANITIZERS "address,undefined" CACHE STRING "Sanitizers when SSE_SANITIZE is ON")
+endif()
 if(SSE_SANITIZE)
-  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
-  add_link_options(-fsanitize=address,undefined)
+  add_compile_options(-fsanitize=${SSE_SANITIZERS} -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=${SSE_SANITIZERS})
 endif()
 
 add_library(eventsource src/sse_parser.c)
