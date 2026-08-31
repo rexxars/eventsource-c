@@ -7,3 +7,4 @@ endfunction()
 
 sse_add_test(parser_init)
 sse_add_test(parser_basic)
+sse_add_test(parser_fields)
