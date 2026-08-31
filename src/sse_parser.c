@@ -192,13 +192,41 @@ static void line_end(sse_parser_t *p) {
   p->state = PS_LINE_START;
 }
 
+static const uint8_t SSE_BOM[3] = {0xEF, 0xBB, 0xBF};
+
 static void process_byte(sse_parser_t *p, uint8_t b) {
-  /* Task 4 adds BOM handling and \r / swallow_lf handling here. */
+  if (p->swallow_lf) {
+    p->swallow_lf = false;
+    if (b == '\n') return; /* second half of a CRLF pair */
+  }
+
+  if (p->state == PS_BOM) {
+    if (p->bom_n < 3 && b == SSE_BOM[p->bom_n]) {
+      p->bom_n++;
+      if (p->bom_n == 3) {
+        p->state = PS_LINE_START;
+        p->bom_n = 0;
+      }
+      return;
+    }
+    /* Not a BOM after all: replay the matched prefix as ordinary bytes,
+     * then fall through to process the current byte. Recursion depth <= 3
+     * and replayed bytes are never terminators. */
+    uint8_t n = p->bom_n;
+    p->bom_n = 0;
+    p->state = PS_LINE_START;
+    for (uint8_t i = 0; i < n; i++) process_byte(p, SSE_BOM[i]);
+  }
+
+  if (b == '\r') {
+    line_end(p);
+    p->swallow_lf = true;
+    return;
+  }
   if (b == '\n') {
     line_end(p);
     return;
   }
-  if (p->state == PS_BOM) p->state = PS_LINE_START; /* placeholder until Task 4 */
 
   switch (p->state) {
     case PS_LINE_START:
