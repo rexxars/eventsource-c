@@ -6,3 +6,4 @@ function(sse_add_test name)
 endfunction()
 
 sse_add_test(parser_init)
+sse_add_test(parser_basic)
