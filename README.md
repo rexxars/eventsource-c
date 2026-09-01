@@ -78,8 +78,10 @@ void start_stream(void) {
   sse_client_init(&client, &cfg);
 
   /* Runs the poll loop in a FreeRTOS task. Arguments: client, task name,
-   * stack size in BYTES, task priority. The task deletes itself once the
-   * client reaches SSE_STATE_CLOSED; stop it from any other task with
+   * stack size in BYTES, task priority. 6144 fits TLS plus light logging
+   * callbacks; see "Sizing the task stack" for how to pick and verify a
+   * value. The task deletes itself once the client reaches
+   * SSE_STATE_CLOSED; stop it from any other task with
    * sse_client_request_stop(&client). */
   sse_client_start_task(&client, "sse", 6144, 5);
 }
@@ -132,6 +134,12 @@ See `examples/posix` for the complete program.
 - `id_buf`/`event_buf`: 128 and 64 bytes are good defaults. `id_buf_len` may not exceed `SSE_CLIENT_ID_MAX + 1` (129 by default) so every accepted id can be persisted for reconnect resume; `sse_client_init` fails otherwise.
 - `rx_buf` is the transport read scratch; 1 KiB is plenty.
 - All buffers are caller-provided and borrowed until the client reaches `SSE_STATE_CLOSED`; the core never allocates.
+
+## Sizing the task stack
+
+The stack given to `sse_client_start_task` must hold the deepest call chain the polling task ever makes: the poll loop itself (small), the transport, and above all mbedTLS, whose handshake runs on this task's stack during every `https://` connect and reconnect and typically needs 4-6 KB on its own. Your callbacks run on this task too: `printf`/`ESP_LOG` formatting costs another 1-2 KB (more with floats), and stack buffers in `on_message` add directly. Rules of thumb: 6-8 KB for `https://`, around 4 KB for plain `http://`, plus whatever your callbacks use. Heavy payload processing is better moved to another task via a queue, which also keeps the poll loop responsive.
+
+Measure instead of guessing: `uxTaskGetStackHighWaterMark(NULL)` called from inside a callback reports the task's minimum-ever free stack (in bytes on ESP-IDF). Trigger the worst case deliberately (force a TLS reconnect, since the handshake is the peak), then size to the observed use plus 25-30% headroom. Undersizing panics with `Stack canary watchpoint triggered (sse)` naming the task; oversizing merely spends RAM.
 
 ## Callbacks
 
