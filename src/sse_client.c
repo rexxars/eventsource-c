@@ -2,6 +2,19 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Cross-task stop flag access. C99 has no <stdatomic.h>, so use the GNU
+ * atomic builtins, which Apple clang and ESP-IDF's GCC toolchains support
+ * even in -std=c99 mode. Elsewhere this degrades to a volatile access and
+ * the cross-task guarantee is only as strong as the platform's aligned
+ * single-byte stores. */
+#if defined(__GNUC__) || defined(__clang__)
+#define STOP_SET(c) __atomic_store_n(&(c)->stop_requested, 1, __ATOMIC_RELEASE)
+#define STOP_GET(c) __atomic_load_n(&(c)->stop_requested, __ATOMIC_ACQUIRE)
+#else
+#define STOP_SET(c) ((void)((c)->stop_requested = 1))
+#define STOP_GET(c) ((c)->stop_requested)
+#endif
+
 /* ---- parser callback bridge ---- */
 
 static void bridge_on_id(void *ud, const char *id, size_t len) {
@@ -213,7 +226,7 @@ int sse_client_init(sse_client_t *c, const sse_client_config_t *cfg) {
 }
 
 uint32_t sse_client_poll(sse_client_t *c) {
-  if (c->stop_requested && c->state != SSE_STATE_CLOSED) to_closed(c);
+  if (STOP_GET(c) && c->state != SSE_STATE_CLOSED) to_closed(c);
   switch ((sse_client_state_t)c->state) {
     case SSE_STATE_CLOSED:
       return UINT32_MAX;
@@ -232,7 +245,7 @@ uint32_t sse_client_poll(sse_client_t *c) {
     case SSE_STATE_OPEN: {
       int r = c->cfg.transport->read(c->cfg.transport->ctx, c->cfg.rx_buf,
                                      c->cfg.rx_buf_len, c->cfg.read_timeout_ms);
-      if (c->stop_requested) {
+      if (STOP_GET(c)) {
         to_closed(c);
         return UINT32_MAX;
       }
@@ -263,7 +276,7 @@ uint32_t sse_client_poll(sse_client_t *c) {
 
 void sse_client_close(sse_client_t *c) { to_closed(c); }
 
-void sse_client_request_stop(sse_client_t *c) { c->stop_requested = true; }
+void sse_client_request_stop(sse_client_t *c) { STOP_SET(c); }
 
 sse_client_state_t sse_client_state(const sse_client_t *c) {
   return (sse_client_state_t)c->state;

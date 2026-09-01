@@ -86,7 +86,11 @@ typedef struct sse_client {
   sse_client_config_t cfg;
   sse_parser_t parser;
   uint8_t state;
-  volatile bool stop_requested;
+  /* Cross-task stop flag. Accessed via atomic builtins on GCC/Clang
+   * toolchains (see sse_client.c); volatile is the storage-class fallback
+   * for other compilers, where request_stop's cross-task guarantee weakens
+   * to "platforms with atomic aligned single-byte stores". */
+  volatile unsigned char stop_requested;
   bool transport_open;
   unsigned attempts; /* failures since last delivered message */
   uint32_t base_retry_ms;
