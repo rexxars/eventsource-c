@@ -32,6 +32,13 @@ typedef struct {
 static size_t on_body(char *ptr, size_t sz, size_t nm, void *ud) {
   curl_ctx_t *t = ud;
   size_t n = sz * nm;
+  /* Bodies of redirect responses are transport noise: discard them so a
+   * large 3xx body can neither fill the ring nor pause the transfer. A
+   * paused transfer never completes, and CURLINFO_REDIRECT_URL is only
+   * reliable once the transfer has completed. */
+  if (t->header_block_status >= 300 && t->header_block_status < 400) {
+    return n;
+  }
   t->body_started = 1;
   if (n > RING_CAP - t->r_len) {
     t->paused = 1;
@@ -199,6 +206,20 @@ static int curl_open_fn(void *vctx, const sse_request_t *req, sse_response_info_
     }
     if (t->header_block_status < 300 || t->header_block_status >= 400) {
       break; /* final response */
+    }
+    /* Drain the (discarded) 3xx body to completion first:
+     * CURLINFO_REDIRECT_URL is only populated for a completed transfer. */
+    int drained = 0;
+    while (!t->transfer_done && drained < OPEN_TIMEOUT_MS) {
+      if (pump(t, 100) < 0) {
+        teardown(t);
+        return -1;
+      }
+      drained += 100;
+    }
+    if (!t->transfer_done) { /* redirect body stall */
+      teardown(t);
+      return -1;
     }
     /* Manual, same-origin-only redirect. Cross-origin (incl. any scheme or
      * port change), unparseable, or over-budget redirects surface the 3xx
