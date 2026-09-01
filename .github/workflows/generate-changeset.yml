@@ -1,0 +1,98 @@
+# Auto-generates a changeset from the PR's conventional-commit title.
+# Adapted from sanity-io/client: runs on pull_request_target so it has write
+# access, but only ever executes the BASE branch's analysis script, never
+# code from the PR. Same-repo PRs only: the default GITHUB_TOKEN cannot push
+# to fork branches (fork PRs need a manual changeset). Pushes made with the
+# workflow token do not retrigger workflows, so there is no bot loop.
+name: Generate changeset from PR
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  generate-changeset:
+    name: Generate changeset
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout base branch scripts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          sparse-checkout: .github/scripts
+          path: base-scripts
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Analyze PR and generate changeset
+        id: analyze
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ ! -f base-scripts/.github/scripts/generate-changeset.mjs ]; then
+            echo "Base branch '${{ github.event.pull_request.base.ref }}' has no generate-changeset script, skipping"
+            echo "action=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node base-scripts/.github/scripts/generate-changeset.mjs
+
+      - name: Checkout PR branch
+        if: steps.analyze.outputs.action == 'write' || steps.analyze.outputs.action == 'remove'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Configure git
+        if: steps.analyze.outputs.action == 'write' || steps.analyze.outputs.action == 'remove'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Write changeset and push
+        if: steps.analyze.outputs.action == 'write'
+        env:
+          CHANGESET_CONTENT: ${{ steps.analyze.outputs.changeset_content }}
+          CHANGESET_FILE: ${{ steps.analyze.outputs.changeset_file }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir -p "$(dirname "$CHANGESET_FILE")"
+          printf '%s' "$CHANGESET_CONTENT" > "$CHANGESET_FILE"
+          git add "$CHANGESET_FILE"
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update auto-generated changeset for PR #${{ github.event.pull_request.number }}"
+            git push --force-with-lease="${PR_HEAD_REF}:${PR_HEAD_SHA}" origin "HEAD:${PR_HEAD_REF}"
+          else
+            echo "No changes to changeset file"
+          fi
+
+      - name: Remove changeset and push
+        if: steps.analyze.outputs.action == 'remove'
+        env:
+          CHANGESET_FILE: ${{ steps.analyze.outputs.changeset_file }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ -f "$CHANGESET_FILE" ]; then
+            git rm "$CHANGESET_FILE"
+            git commit -m "chore: remove auto-generated changeset for PR #${{ github.event.pull_request.number }}"
+            git push --force-with-lease="${PR_HEAD_REF}:${PR_HEAD_SHA}" origin "HEAD:${PR_HEAD_REF}"
+          fi

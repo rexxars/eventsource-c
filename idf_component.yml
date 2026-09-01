@@ -14,3 +14,8 @@ files:
     - "docs/**"
     - "build*/**"
     - ".github/**"
+    - ".changeset/**"
+    - "scripts/**"
+    - "node_modules/**"
+    - "package.json"
+    - "package-lock.json"

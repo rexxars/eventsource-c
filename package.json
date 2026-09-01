@@ -1,0 +1,14 @@
+{
+  "name": "eventsource-c",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Version anchor for changesets; the C library is published to the ESP Component Registry, not npm",
+  "type": "module",
+  "scripts": {
+    "version": "changeset version && node scripts/sync-component-version.mjs",
+    "release": "./scripts/release.sh"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.0"
+  }
+}

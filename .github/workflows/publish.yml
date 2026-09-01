@@ -1,7 +1,10 @@
+# Manual fallback publisher. Normal releases go through the changesets flow
+# in release.yml (merge the "chore: release" PR); this exists for re-running
+# a failed upload. Tag pushes deliberately do not trigger it: tags created by
+# the release workflow's token would never fire this workflow anyway.
 name: Publish to ESP Component Registry
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
   publish:
