@@ -17,15 +17,95 @@
 typedef struct {
   esp_http_client_handle_t hc;
   char content_type[64];
+  char location[512]; /* Location header of the current response, if any */
+  char url[512];      /* URL of the current request, for origin comparison */
   int32_t retry_after_s;
   uint32_t configured_timeout_ms;
 } esp_ctx_t;
+
+/* Extract lowercase scheme, host (brackets kept for IPv6 literals), and
+ * default-resolved port from an absolute http(s) URL. Returns false on
+ * anything unparseable or non-http(s). */
+static bool origin_of(const char *url, char *scheme, size_t scheme_cap,
+                      char *host, size_t host_cap, int *port) {
+  const char *sep = strstr(url, "://");
+  if (!sep) return false;
+  size_t slen = (size_t)(sep - url);
+  if (slen == 0 || slen >= scheme_cap) return false;
+  for (size_t i = 0; i < slen; i++) {
+    char ch = url[i];
+    if (ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
+    scheme[i] = ch;
+  }
+  scheme[slen] = '\0';
+
+  const char *h = sep + 3;
+  const char *end = h;
+  const char *at = NULL;
+  while (*end && *end != '/' && *end != '?' && *end != '#') {
+    if (*end == '@') at = end; /* userinfo */
+    end++;
+  }
+  if (at) h = at + 1;
+  if (h >= end) return false;
+
+  const char *host_end = end;
+  const char *port_str = NULL;
+  if (*h == '[') { /* IPv6 literal */
+    const char *close = memchr(h, ']', (size_t)(end - h));
+    if (!close) return false;
+    host_end = close + 1;
+    if (host_end < end && *host_end == ':') port_str = host_end + 1;
+  } else {
+    const char *colon = memchr(h, ':', (size_t)(end - h));
+    if (colon) {
+      host_end = colon;
+      port_str = colon + 1;
+    }
+  }
+  size_t hlen = (size_t)(host_end - h);
+  if (hlen == 0 || hlen >= host_cap) return false;
+  for (size_t i = 0; i < hlen; i++) {
+    char ch = h[i];
+    if (ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
+    host[i] = ch;
+  }
+  host[hlen] = '\0';
+
+  if (port_str) {
+    if (port_str >= end) return false;
+    int p = 0;
+    for (const char *q = port_str; q < end; q++) {
+      if (*q < '0' || *q > '9') return false;
+      p = p * 10 + (*q - '0');
+      if (p > 65535) return false;
+    }
+    *port = p;
+  } else if (strcmp(scheme, "http") == 0) {
+    *port = 80;
+  } else if (strcmp(scheme, "https") == 0) {
+    *port = 443;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+static bool same_origin_urls(const char *a, const char *b) {
+  char sa[8], sb[8], ha[256], hb[256];
+  int pa, pb;
+  if (!origin_of(a, sa, sizeof sa, ha, sizeof ha, &pa)) return false;
+  if (!origin_of(b, sb, sizeof sb, hb, sizeof hb, &pb)) return false;
+  return strcmp(sa, sb) == 0 && strcmp(ha, hb) == 0 && pa == pb;
+}
 
 static esp_err_t on_http_event(esp_http_client_event_t *evt) {
   esp_ctx_t *t = evt->user_data;
   if (evt->event_id == HTTP_EVENT_ON_HEADER) {
     if (strcasecmp(evt->header_key, "content-type") == 0) {
       snprintf(t->content_type, sizeof t->content_type, "%s", evt->header_value);
+    } else if (strcasecmp(evt->header_key, "location") == 0) {
+      snprintf(t->location, sizeof t->location, "%s", evt->header_value);
     } else if (strcasecmp(evt->header_key, "retry-after") == 0) {
       /* evt->header_value is NUL-terminated. Only parse delta-seconds
        * (leading ASCII digit); HTTP-date form is left as absent, matching
@@ -53,7 +133,9 @@ static int esp_open_fn(void *vctx, const sse_request_t *req, sse_response_info_t
   esp_ctx_t *t = vctx;
   esp_teardown(t);
   t->content_type[0] = '\0';
+  t->location[0] = '\0';
   t->retry_after_s = -1;
+  snprintf(t->url, sizeof t->url, "%s", req->url);
 
   esp_http_client_config_t cfg = {
       .url = req->url,
@@ -95,11 +177,24 @@ static int esp_open_fn(void *vctx, const sse_request_t *req, sse_response_info_t
     bool is_redirect = status == 301 || status == 302 || status == 303 ||
                        status == 307 || status == 308;
     if (!is_redirect || hop >= ESP_MAX_REDIRECT_HOPS) break;
-    /* Rewrite the handle's URL from the Location header and reconnect. If
-     * there is no usable Location, report the 3xx as-is and let the client's
-     * reconnect policy decide. Request headers persist on the handle. */
+    /* Same-origin only: request headers persist on the handle across the
+     * reopen, so following a cross-origin Location would hand
+     * caller-supplied credentials to another host. Absolute-path relative
+     * Locations are same-origin by definition; absolute http(s) ones must
+     * match scheme, host, and port. Everything else (cross-origin,
+     * scheme-relative "//host/...", other schemes, no Location) surfaces
+     * the 3xx to the client's reconnect policy. */
+    if (t->location[0] == '\0') break;
+    bool relative_path = t->location[0] == '/' && t->location[1] != '/';
+    if (!relative_path) {
+      bool absolute_http = strncasecmp(t->location, "http://", 7) == 0 ||
+                           strncasecmp(t->location, "https://", 8) == 0;
+      if (!absolute_http || !same_origin_urls(t->url, t->location)) break;
+      snprintf(t->url, sizeof t->url, "%s", t->location);
+    }
     if (esp_http_client_set_redirection(t->hc) != ESP_OK) break;
     t->content_type[0] = '\0'; /* final block's captured headers win */
+    t->location[0] = '\0';
     t->retry_after_s = -1;
     esp_http_client_close(t->hc);
   }
