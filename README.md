@@ -130,9 +130,23 @@ See `examples/posix` for the complete program.
 
 ## Buffer sizing
 
-- `data_buf` caps the event payload: a buffer of N bytes holds events up to N-1 bytes. Larger events are discarded, see "Oversized messages".
-- `id_buf`/`event_buf`: 128 and 64 bytes are good defaults. `id_buf_len` may not exceed `SSE_CLIENT_ID_MAX + 1` (129 by default) so every accepted id can be persisted for reconnect resume; `sse_client_init` fails otherwise.
-- `rx_buf` is the transport read scratch; 1 KiB is plenty.
+The three parser buffers map one-to-one onto the fields of the SSE wire format, so size them by looking at what your API actually sends. Given a stream like:
+
+```
+event: mutation                                  <- event_buf holds this value
+id: e62d82e6-4f28#drafts.validation@PVo0MAf_kDZ  <- id_buf holds this value
+data: {"documentId":"drafts.validation","transi  <- data_buf accumulates this
+data: tion":"update", ...}                       <- ...across multiple data lines
+
+: keepalive                                      <- comments cost no buffer space
+```
+
+All of it additionally streams through `rx_buf` in raw network-sized chunks on its way to the parser.
+
+- `event_buf` holds the value of the `event:` field, i.e. the event type name (`mutation` above). Size it for the longest event name your API emits, plus 1 for the NUL terminator. A name that does not fit is dropped, not truncated, and the event is delivered with the default type `"message"`.
+- `id_buf` holds the value of the `id:` field. Real-world ids can be long (the one above is typical of APIs that encode a resume cursor in the id), so size for the longest id plus 1. An id that does not fit is dropped, not truncated, and this is not surfaced through `on_error`: the visible symptom is that `Last-Event-ID` stops advancing, so a later reconnect resumes from an older position. `id_buf_len` may not exceed `SSE_CLIENT_ID_MAX + 1` (129 by default; `sse_client_init` fails otherwise) so every accepted id can be persisted for resume. For APIs with longer ids, raise the ceiling at compile time with `-DSSE_CLIENT_ID_MAX=256` or similar.
+- `data_buf` accumulates the `data:` payload of the event currently being parsed; multiple `data:` lines are joined with `\n` and count toward the same total. A buffer of N bytes holds payloads up to N-1 bytes. Size it for the largest event your API can send, not the typical one: for JSON streams that usually means the largest document, patch, or batch, and getting this wrong has consequences beyond a lost message (see "Oversized messages").
+- `rx_buf` is only the network read scratch and limits nothing: an event larger than `rx_buf` simply arrives across several reads and is reassembled in `data_buf`. Its size is an efficiency knob, not a correctness one. Each poll drains at most `rx_buf_len` bytes from the transport, so with a 1 KiB buffer an 8 KiB event is consumed in eight read-and-parse rounds where an 8 KiB buffer does it in one; fewer, larger reads cost slightly less CPU per byte. For streams of small, occasional events the difference is unmeasurable and 1 KiB is plenty; if your API routinely ships events of tens of KiB, sizing `rx_buf` at a few KiB trims loop overhead. There is little point going beyond `data_buf`'s size, and latency is unaffected either way since the poll loop re-polls immediately while data is pending.
 - All buffers are caller-provided and borrowed until the client reaches `SSE_STATE_CLOSED`; the core never allocates.
 
 ## Sizing the task stack
@@ -177,12 +191,17 @@ Returning `true` for something the default would stop on works the same way, e.g
 
 An event whose payload exceeds `data_buf` is dropped: the parser discards its bytes, delivers nothing, does not advance `Last-Event-ID` past it, and resumes cleanly at the next event boundary. The connection stays open. You are told about it through `on_error` with `err->reason == SSE_ERR_MESSAGE_TOO_LARGE` (informational: `will_retry` is true and `retry_in_ms` is 0 because no reconnect is involved).
 
-You can react three ways: ignore it (log and move on), size `data_buf` for your largest expected event, or treat it as fatal. One caveat makes the choice matter: because `Last-Event-ID` is not advanced past the dropped event, a resuming server will replay it after the next reconnect, and an event that can never fit would then be dropped again on every reconnect.
+You can react three ways: ignore it (log and move on), size `data_buf` for your largest expected event, or treat it as fatal. Two caveats make the choice matter.
+
+First, **a dropped event can silently corrupt derived state**. If your stream is stateful, where later events build on earlier ones (incremental patches, mutation logs, anything with a "previous revision" notion), every event applied after a dropped one may be applied to a stale base, and nothing else will look wrong. For such streams, ignoring the error is the one option you do not have: treat it as fatal, resynchronize out of band (a full refetch of the current state), and only then resume the stream.
+
+Second, because `Last-Event-ID` is not advanced past the dropped event, a resuming server will replay it after the next reconnect, and an event that can never fit would then be dropped again on every reconnect.
 
 ```c
 static void on_error(void *ud, const sse_error_t *err) {
   if (err->reason == SSE_ERR_MESSAGE_TOO_LARGE) {
-    /* This device cannot process that event; give up rather than loop. */
+    /* This device cannot process that event, and later events may depend
+     * on it. Stop the stream; resync state out of band before resuming. */
     sse_client_close(&client);
     return;
   }
