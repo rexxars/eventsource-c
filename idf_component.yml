@@ -1,0 +1,16 @@
+version: "0.1.0"
+description: "Server-Sent Events (EventSource) client: spec-accurate SSE parser, auto-reconnect, Last-Event-ID resume, zero heap in the core"
+url: "https://github.com/rexxars/eventsource-c"
+license: "MIT"
+dependencies:
+  idf: ">=5.0"
+files:
+  exclude:
+    - "tests/**"
+    - "fuzz/**"
+    - "tools/**"
+    - "ports/posix/**"
+    - "examples/posix/**"
+    - "docs/**"
+    - "build*/**"
+    - ".github/**"

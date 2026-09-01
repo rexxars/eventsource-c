@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 
 if(ESP_PLATFORM)
-  # ESP-IDF component build. Sources grow in Task 12.
   idf_component_register(
-    SRCS src/sse_parser.c src/sse_client.c
-    INCLUDE_DIRS include
+    SRCS
+      src/sse_parser.c
+      src/sse_client.c
+      ports/esp-idf/sse_transport_esp.c
+      ports/esp-idf/sse_client_task.c
+    INCLUDE_DIRS include ports/esp-idf
+    PRIV_REQUIRES esp_http_client mbedtls
   )
   return()
 endif()
