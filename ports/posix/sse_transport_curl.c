@@ -42,8 +42,13 @@ static size_t on_header(char *ptr, size_t sz, size_t nm, void *ud) {
   if (n > 5 && strncmp(ptr, "HTTP/", 5) == 0) {
     t->retry_after_s = -1; /* new response block (redirect chain) */
   } else if (n > 12 && strncasecmp(ptr, "Retry-After:", 12) == 0) {
-    long v = strtol(ptr + 12, NULL, 10);
-    if (v >= 0) t->retry_after_s = (int32_t)v; /* delta-seconds only */
+    const char *p = ptr + 12;
+    const char *end = ptr + n;
+    while (p < end && *p == ' ') p++;
+    if (p < end && *p >= '0' && *p <= '9') {
+      long v = strtol(p, NULL, 10); /* delta-seconds only; HTTP-date form left as absent */
+      if (v >= 0) t->retry_after_s = (int32_t)v;
+    }
   }
   return n;
 }
@@ -150,6 +155,10 @@ static int curl_read_fn(void *vctx, void *buf, size_t len, uint32_t timeout_ms) 
   }
   t->r_head = (t->r_head + n) % RING_CAP;
   t->r_len -= n;
+  if (t->paused && t->r_len < RING_CAP / 2) {
+    t->paused = 0;
+    curl_easy_pause(t->easy, CURLPAUSE_CONT);
+  }
   return (int)n;
 }
 
