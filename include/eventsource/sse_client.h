@@ -93,6 +93,7 @@ typedef struct sse_client {
   volatile unsigned char stop_requested;
   bool transport_open;
   unsigned attempts; /* failures since last delivered message */
+  size_t extra_header_count; /* validated at init; bounds every rebuild */
   uint32_t base_retry_ms;
   uint32_t retry_deadline;
   uint32_t last_rx_ms;

@@ -208,6 +208,26 @@ int main(void) {
     OK_INT(sse_client_state(&cl), SSE_STATE_CLOSED);
   }
 
+  /* extra_headers grown (wrongly) after init must not overflow the internal
+   * header array: only the count validated at init is sent */
+  fresh();
+  mock.n_conns = 1;
+  sse_conn(0, 200, "text/event-stream", "data: x\n\n", SSE_READ_TIMEOUT);
+  {
+    static const char *mut_headers[32];
+    mut_headers[0] = "X-A: 1";
+    mut_headers[1] = NULL;
+    sse_client_config_t cfg = base_cfg();
+    cfg.extra_headers = mut_headers;
+    OK_INT(sse_client_init(&cl, &cfg), 0); /* validates count = 1 */
+    for (int i = 1; i < 31; i++) mut_headers[i] = "X-Grown: nope";
+    mut_headers[31] = NULL;
+    pump(10); /* build_headers runs here; must not overflow */
+    OK(strstr(mock.captured_headers, "X-A: 1|") != NULL);
+    OK(strstr(mock.captured_headers, "X-Grown") == NULL);
+    OK(strstr(clog, "msg(message,,x)\n") != NULL);
+  }
+
   /* a transport read() result larger than rx_buf_len is a transport error,
    * never fed to the parser */
   fresh();

@@ -96,7 +96,11 @@ static void build_headers(sse_client_t *c) {
     c->headers[n++] = c->id_header;
   }
   if (c->cfg.extra_headers) {
-    for (const char *const *h = c->cfg.extra_headers; *h; h++) c->headers[n++] = *h;
+    /* Bound by the count validated at init: the borrowed array could have
+     * been (wrongly) grown since, and c->headers must never overflow. */
+    for (size_t i = 0; i < c->extra_header_count && c->cfg.extra_headers[i]; i++) {
+      c->headers[n++] = c->cfg.extra_headers[i];
+    }
   }
   c->headers[n] = NULL;
 }
@@ -216,6 +220,7 @@ int sse_client_init(sse_client_t *c, const sse_client_config_t *cfg) {
 
   memset(c, 0, sizeof *c);
   c->cfg = *cfg;
+  c->extra_header_count = extra;
   if (c->cfg.default_retry_ms == 0) c->cfg.default_retry_ms = 3000;
   if (c->cfg.read_timeout_ms == 0) c->cfg.read_timeout_ms = 500;
   c->base_retry_ms = c->cfg.default_retry_ms;
