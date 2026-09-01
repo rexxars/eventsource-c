@@ -217,7 +217,9 @@ Both shipped transports follow redirects only within the same origin (same schem
 
 ## Heartbeats and comments
 
-"Comments" in the Server-Sent Events protocol are lines prefixed with `:`. These are discarded by the parser, and often used as "hearbeats" - a server might send them every few seconds in order for the connection not to be treated as "dead".
+"Comments" in the Server-Sent Events protocol are lines prefixed with `:`. These are discarded by the parser, and often used as "heartbeats" - a server might send them every few seconds in order for the connection not to be treated as "dead".
+
+A comment is recognized on its first byte (the leading `:`) and every following byte up to the line ending is discarded as it arrives. Nothing is accumulated, none of your buffers are touched, and no callback fires - a comment of any length costs zero memory.
 
 ## Stopping the client
 
