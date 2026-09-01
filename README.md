@@ -14,10 +14,15 @@ idf.py add-dependency "rexxars/eventsource"
 #include "eventsource/sse_client.h"
 #include "sse_client_task.h"
 #include "sse_transport_esp.h"
+#include "esp_timer.h"
 
 static char db[8192], ib[128], eb[64];
 static uint8_t rx[1024];
 static sse_client_t client;
+
+static uint32_t now_ms(void) {
+  return (uint32_t)(esp_timer_get_time() / 1000);
+}
 
 static void on_message(void *ud, const sse_message_t *m) {
   printf("[%s] %.*s\n", m->event, (int)m->data_len, m->data);
@@ -34,7 +39,7 @@ void start_stream(void) {
   cfg.jitter_pct = 10;
   cfg.idle_timeout_ms = 60000;
   cfg.transport = sse_transport_esp_http_client();
-  cfg.now_ms = /* esp_timer_get_time()/1000 wrapper */;
+  cfg.now_ms = now_ms;
   cfg.callbacks.on_message = on_message;
   sse_client_init(&client, &cfg);
   sse_client_start_task(&client, "sse", 6144, 5);
