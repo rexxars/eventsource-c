@@ -68,7 +68,10 @@ typedef struct {
  *   callback is allowed: it stops further dispatch, and a reconnect_policy
  *   that closes cannot resurrect the client by returning true.
  * - sse_client_request_stop() is the only function safe to call from
- *   another task. */
+ *   another task. That guarantee holds on GCC/Clang toolchains (atomic
+ *   builtins); other compilers refuse to build unless
+ *   SSE_CLIENT_ALLOW_NONATOMIC_STOP explicitly accepts a weaker volatile
+ *   fallback. */
 typedef struct {
   const char *url;                  /* borrowed; must outlive the client */
   const char *const *extra_headers; /* NULL-terminated "Name: value", or NULL */
@@ -102,9 +105,10 @@ typedef struct sse_client {
   sse_parser_t parser;
   uint8_t state;
   /* Cross-task stop flag. Accessed via atomic builtins on GCC/Clang
-   * toolchains (see sse_client.c); volatile is the storage-class fallback
-   * for other compilers, where request_stop's cross-task guarantee weakens
-   * to "platforms with atomic aligned single-byte stores". */
+   * toolchains (see sse_client.c). Other compilers fail the build unless
+   * SSE_CLIENT_ALLOW_NONATOMIC_STOP is defined, which accepts a volatile
+   * fallback and weakens request_stop's cross-task guarantee to "platforms
+   * with atomic aligned single-byte stores". */
   volatile unsigned char stop_requested;
   bool transport_open;
   unsigned attempts; /* failures since last delivered message */

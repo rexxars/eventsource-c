@@ -4,15 +4,23 @@
 
 /* Cross-task stop flag access. C99 has no <stdatomic.h>, so use the GNU
  * atomic builtins, which Apple clang and ESP-IDF's GCC toolchains support
- * even in -std=c99 mode. Elsewhere this degrades to a volatile access and
- * the cross-task guarantee is only as strong as the platform's aligned
- * single-byte stores. */
+ * even in -std=c99 mode. There is deliberately no silent fallback: a plain
+ * (even volatile) access is a C data race, and sse_client_request_stop()
+ * publicly promises cross-task safety. Compilers without the builtins must
+ * opt in to the weakened volatile behavior explicitly. */
 #if defined(__GNUC__) || defined(__clang__)
 #define STOP_SET(c) __atomic_store_n(&(c)->stop_requested, 1, __ATOMIC_RELEASE)
 #define STOP_GET(c) __atomic_load_n(&(c)->stop_requested, __ATOMIC_ACQUIRE)
-#else
+#elif defined(SSE_CLIENT_ALLOW_NONATOMIC_STOP)
+/* Explicit opt-in: volatile is NOT a synchronization primitive. The
+ * cross-task guarantee of sse_client_request_stop() then rests entirely on
+ * the platform making aligned single-byte stores atomic. */
 #define STOP_SET(c) ((void)((c)->stop_requested = 1))
 #define STOP_GET(c) ((c)->stop_requested)
+#else
+#error "No atomic builtins available for the cross-task stop flag. Use a \
+GCC-compatible compiler, or define SSE_CLIENT_ALLOW_NONATOMIC_STOP to accept \
+a volatile fallback with a weakened sse_client_request_stop() guarantee."
 #endif
 
 /* ---- parser callback bridge ---- */
