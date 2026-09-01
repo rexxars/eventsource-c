@@ -2,6 +2,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -92,11 +93,14 @@ static int esp_read_fn(void *vctx, void *buf, size_t len, uint32_t timeout_ms) {
   esp_ctx_t *t = vctx;
   if (!t->hc) return SSE_READ_ERROR;
   if (timeout_ms != t->configured_timeout_ms) {
-    esp_http_client_set_timeout_ms(t->hc, (int)timeout_ms);
+    /* esp_http_client takes int; clamp rather than wrap negative. */
+    uint32_t tmo = timeout_ms > (uint32_t)INT_MAX ? (uint32_t)INT_MAX : timeout_ms;
+    esp_http_client_set_timeout_ms(t->hc, (int)tmo);
     t->configured_timeout_ms = timeout_ms;
   }
   errno = 0;
-  int r = esp_http_client_read(t->hc, buf, (int)len);
+  size_t want = len > (size_t)INT_MAX ? (size_t)INT_MAX : len;
+  int r = esp_http_client_read(t->hc, buf, (int)want);
   if (r > 0) return r;
   if (r == 0) {
     /* 0 can mean EOF or (for some transports) a poll timeout. Chunked SSE

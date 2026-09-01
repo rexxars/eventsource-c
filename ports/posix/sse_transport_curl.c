@@ -115,7 +115,14 @@ static int curl_open_fn(void *vctx, const sse_request_t *req, sse_response_info_
     return -1;
   }
   for (const char *const *h = req->headers; h && *h; h++) {
-    t->hdrs = curl_slist_append(t->hdrs, *h);
+    /* On allocation failure curl_slist_append returns NULL without freeing
+     * the old list; assigning directly would leak it. */
+    struct curl_slist *appended = curl_slist_append(t->hdrs, *h);
+    if (!appended) {
+      teardown(t);
+      return -1;
+    }
+    t->hdrs = appended;
   }
   curl_easy_setopt(t->easy, CURLOPT_URL, req->url);
   curl_easy_setopt(t->easy, CURLOPT_HTTPHEADER, t->hdrs);
