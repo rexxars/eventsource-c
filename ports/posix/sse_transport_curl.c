@@ -1,4 +1,5 @@
 #include "sse_transport_curl.h"
+#include "sse_clock_posix.h"
 #include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -183,14 +184,16 @@ static int curl_open_fn(void *vctx, const sse_request_t *req, sse_response_info_
 
   int hops = 0;
   for (;;) {
-    int waited = 0;
+    /* Wall-clock budget: pump() returns immediately whenever the socket is
+     * active, so counting iterations would burn the budget in a fraction of
+     * the nominal time against a busy connection. */
+    uint32_t wait_start = sse_now_ms_posix();
     while (!t->headers_done && !t->body_started && !t->transfer_done &&
-           waited < OPEN_TIMEOUT_MS) {
+           (uint32_t)(sse_now_ms_posix() - wait_start) < OPEN_TIMEOUT_MS) {
       if (pump(t, 100) < 0) {
         teardown(t);
         return -1;
       }
-      waited += 100;
     }
     if (!t->headers_done && !t->body_started && !t->transfer_done) { /* header stall */
       teardown(t);
@@ -208,14 +211,16 @@ static int curl_open_fn(void *vctx, const sse_request_t *req, sse_response_info_
       break; /* final response */
     }
     /* Drain the (discarded) 3xx body to completion first:
-     * CURLINFO_REDIRECT_URL is only populated for a completed transfer. */
-    int drained = 0;
-    while (!t->transfer_done && drained < OPEN_TIMEOUT_MS) {
+     * CURLINFO_REDIRECT_URL is only populated for a completed transfer.
+     * Wall-clock budget, same reasoning as above: a slow-but-active body
+     * wakes pump() far more often than once per 100 ms. */
+    uint32_t drain_start = sse_now_ms_posix();
+    while (!t->transfer_done &&
+           (uint32_t)(sse_now_ms_posix() - drain_start) < OPEN_TIMEOUT_MS) {
       if (pump(t, 100) < 0) {
         teardown(t);
         return -1;
       }
-      drained += 100;
     }
     if (!t->transfer_done) { /* redirect body stall */
       teardown(t);

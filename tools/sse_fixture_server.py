@@ -106,6 +106,21 @@ class Handler(socketserver.StreamRequestHandler):
             elif path == "/redirect-echo":
                 w.write(b"HTTP/1.1 302 Found\r\nLocation: /echo\r\n"
                         b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+            elif path == "/slowredirect":
+                # ~100 KiB 302 body trickled in many small flushed writes
+                # over several seconds: each write wakes the client's pump,
+                # so an iteration-counting drain budget exhausts long before
+                # a wall-clock one does.
+                piece = b"x" * 85
+                count = 1200
+                w.write(b"HTTP/1.1 302 Found\r\nLocation: /stream\r\n"
+                        + f"Content-Length: {len(piece) * count}\r\n".encode()
+                        + b"Connection: close\r\n\r\n")
+                w.flush()
+                for _ in range(count):
+                    w.write(piece)
+                    w.flush()
+                    time.sleep(0.003)
             elif path == "/silent":
                 sse_headers(w)
                 time.sleep(3)

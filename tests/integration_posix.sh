@@ -73,6 +73,14 @@ expect bigredirect "open (reconnect_count=0)"
 expect bigredirect "tick${PORT} 1"
 expect_not bigredirect "status=302"
 
+# Slow-trickled ~100 KiB redirect body (many small writes over several
+# seconds): the drain budget must be wall-clock time, not pump iterations,
+# so the redirect is still followed on the FIRST attempt.
+run_case slowredirect /slowredirect 8
+expect slowredirect "open (reconnect_count=0)"
+expect slowredirect "tick${PORT} 1"
+expect_not slowredirect "will_retry"
+
 # Cross-origin redirect: never followed; the 302 surfaces and stops.
 run_case xorigin /xorigin 2
 expect xorigin "status=302 will_retry=0"
