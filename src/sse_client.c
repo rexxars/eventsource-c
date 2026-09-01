@@ -237,6 +237,12 @@ uint32_t sse_client_poll(sse_client_t *c) {
         return UINT32_MAX;
       }
       if (r > 0) {
+        if ((size_t)r > c->cfg.rx_buf_len) {
+          /* A transport must never report more bytes than the buffer holds;
+           * feeding that count onward would read past caller memory. */
+          fail_conn(c, SSE_ERR_TRANSPORT, 0, -1);
+          return 0;
+        }
         c->last_rx_ms = c->cfg.now_ms();
         sse_parser_feed(&c->parser, c->cfg.rx_buf, (size_t)r);
         return 0;

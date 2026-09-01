@@ -68,6 +68,25 @@ static void sse_conn(int i, int status, const char *ct, const char *body, int ta
   mock.conns[i].tail = tail;
 }
 
+/* A misbehaving transport that reports one more byte than the buffer holds.
+ * The client must reject the count instead of feeding it to the parser. */
+static int rogue_open(void *ctx, const sse_request_t *req, sse_response_info_t *out) {
+  (void)ctx;
+  (void)req;
+  out->status_code = 200;
+  snprintf(out->content_type, sizeof out->content_type, "text/event-stream");
+  out->retry_after_s = -1;
+  return 0;
+}
+static int rogue_read(void *ctx, void *buf, size_t len, uint32_t timeout_ms) {
+  (void)ctx;
+  (void)timeout_ms;
+  memset(buf, 'x', len); /* fill exactly what fits */
+  return (int)len + 1;   /* lie about how much was written */
+}
+static void rogue_close(void *ctx) { (void)ctx; }
+static sse_transport_t rogue_vtable = {NULL, rogue_open, rogue_read, rogue_close};
+
 int main(void) {
   /* idle timeout: silent socket for > idle_timeout_ms forces reconnect */
   fresh();
@@ -187,6 +206,18 @@ int main(void) {
     pump(10);
     OK_STR(clog, "open(0)\nmsg(message,,a)\nclosed\n");
     OK_INT(sse_client_state(&cl), SSE_STATE_CLOSED);
+  }
+
+  /* a transport read() result larger than rx_buf_len is a transport error,
+   * never fed to the parser */
+  fresh();
+  {
+    sse_client_config_t cfg = base_cfg();
+    cfg.transport = &rogue_vtable;
+    OK_INT(sse_client_init(&cl, &cfg), 0);
+    pump(10);
+    OK_STR(clog, "open(0)\nerr(0,0,1,3000)\n"); /* no msg from the bogus bytes */
+    OK_INT(sse_client_state(&cl), SSE_STATE_WAITING_RETRY);
   }
 
   T_END();
