@@ -14,7 +14,9 @@ typedef struct {
   struct curl_slist *hdrs;
   char ring[RING_CAP];
   size_t r_head, r_len;
-  int body_started;      /* first body byte seen: headers are final */
+  int body_started;         /* first body byte seen */
+  int headers_done;         /* final header block completed */
+  int header_block_status;  /* status code of the current header block */
   int transfer_done;
   CURLcode transfer_result;
   int paused;
@@ -41,6 +43,27 @@ static size_t on_header(char *ptr, size_t sz, size_t nm, void *ud) {
   size_t n = sz * nm;
   if (n > 5 && strncmp(ptr, "HTTP/", 5) == 0) {
     t->retry_after_s = -1; /* new response block (redirect chain) */
+    t->headers_done = 0;
+    /* Status code follows the first space: "HTTP/1.1 302 ..." */
+    t->header_block_status = 0;
+    const char *sp = memchr(ptr, ' ', n);
+    if (sp) {
+      const char *q = sp + 1;
+      const char *end = ptr + n;
+      while (q < end && *q >= '0' && *q <= '9') {
+        t->header_block_status = t->header_block_status * 10 + (*q - '0');
+        q++;
+      }
+    }
+  } else if (n <= 2) {
+    /* Blank line: this header block is complete. It is the FINAL block
+     * unless it was a redirect that CURLOPT_FOLLOWLOCATION will chase
+     * (the next block's HTTP/ line resets the flag either way). An SSE
+     * server may finish its headers and then stay silent until the first
+     * event, so open() must not wait for body bytes. */
+    if (!(t->header_block_status >= 300 && t->header_block_status < 400)) {
+      t->headers_done = 1;
+    }
   } else if (n > 12 && strncasecmp(ptr, "Retry-After:", 12) == 0) {
     const char *p = ptr + 12;
     const char *end = ptr + n;
@@ -106,14 +129,15 @@ static int curl_open_fn(void *vctx, const sse_request_t *req, sse_response_info_
   curl_multi_add_handle(t->multi, t->easy);
 
   int waited = 0;
-  while (!t->body_started && !t->transfer_done && waited < OPEN_TIMEOUT_MS) {
+  while (!t->headers_done && !t->body_started && !t->transfer_done &&
+         waited < OPEN_TIMEOUT_MS) {
     if (pump(t, 100) < 0) {
       teardown(t);
       return -1;
     }
     waited += 100;
   }
-  if (!t->body_started && !t->transfer_done) { /* header stall */
+  if (!t->headers_done && !t->body_started && !t->transfer_done) { /* header stall */
     teardown(t);
     return -1;
   }
