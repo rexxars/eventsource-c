@@ -213,7 +213,11 @@ Both shipped transports follow redirects only within the same origin (same schem
 
 ## Idle timeout
 
-"Idle" means the transport delivered no bytes for `idle_timeout_ms`, whatever those bytes are: SSE comment heartbeats (`: keepalive`) reset the timer just like events do, without triggering any callback. When the timeout fires, the connection is treated as dead (the usual half-open TCP situation on flaky Wi-Fi) and goes through the normal retry path as `SSE_ERR_IDLE_TIMEOUT`, resuming with `Last-Event-ID` so nothing is lost against a well-behaved server. 0 disables it. Pick 2-3x the server's heartbeat interval; if the server sends no heartbeats and legitimately quiet periods are expected, leave it disabled, since a forced reconnect costs a TLS handshake.
+"Idle" means the transport delivered no bytes for `idle_timeout_ms` - these do not have to be event payload bytes - they can be newlines, comments and similar. When the timeout fires, the connection is treated as dead (the usual half-open TCP situation on flaky Wi-Fi) and goes through the normal retry path as `SSE_ERR_IDLE_TIMEOUT`, resuming with `Last-Event-ID` so nothing is lost against a well-behaved server. 0 disables it. If the server sends "heartbeats" (usually "comments" - lines prefixed with `:`, see below) - pick 2-3x the server's heartbeat interval; if the server sends no heartbeats and legitimately quiet periods are expected, leave it disabled, since a forced reconnect costs a TLS handshake.
+
+## Heartbeats and comments
+
+"Comments" in the Server-Sent Events protocol are lines prefixed with `:`. These are discarded by the parser, and often used as "hearbeats" - a server might send them every few seconds in order for the connection not to be treated as "dead".
 
 ## Stopping the client
 
