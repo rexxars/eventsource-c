@@ -69,6 +69,15 @@ static bool policy_always(void *ud, const sse_error_t *e) {
   cadd("hook(%d,%d,%d)\n", (int)e->reason, e->http_status, (int)e->will_retry);
   return true;
 }
+/* Closes the client from inside the hook, then asks for a retry anyway:
+ * CLOSED must stay final. */
+static bool policy_close_then_retry(void *ud, const sse_error_t *e) {
+  (void)ud;
+  (void)e;
+  cadd("hook\n");
+  sse_client_close(&cl);
+  return true;
+}
 
 int main(void) {
   /* 204: SERVER_STOP, no retry, closed */
@@ -192,6 +201,22 @@ int main(void) {
     g_now += 3001;
     pump(10);
     OK(strstr(clog, "open(1)\n") != NULL);
+  }
+
+  /* a hook that closes the client and returns true must not resurrect it:
+   * on_closed stays the final signal, no error or reconnect afterwards */
+  fresh();
+  mock.n_conns = 1;
+  sse_conn(0, 500, "", NULL, SSE_READ_EOF);
+  {
+    sse_client_config_t cfg = base_cfg();
+    cfg.reconnect_policy = policy_close_then_retry;
+    OK_INT(sse_client_init(&cl, &cfg), 0);
+    pump(5);
+    OK_STR(clog, "hook\nclosed\n");
+    OK_INT(sse_client_state(&cl), SSE_STATE_CLOSED);
+    OK(sse_client_poll(&cl) == UINT32_MAX);
+    OK_INT(mock.open_calls, 1);
   }
 
   T_END();

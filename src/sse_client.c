@@ -133,6 +133,11 @@ static void fail_conn(sse_client_t *c, sse_error_reason_t reason, int status,
   if (c->cfg.reconnect_policy) {
     e.will_retry = retry;
     retry = c->cfg.reconnect_policy(c->cfg.callbacks.userdata, &e);
+    if (c->state == SSE_STATE_CLOSED) {
+      /* The hook called sse_client_close(): on_closed already fired and is
+       * the final signal. Its return value must not resurrect the client. */
+      return;
+    }
   }
   if (!retry) {
     e.will_retry = false;

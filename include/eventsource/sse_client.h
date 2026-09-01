@@ -57,6 +57,18 @@ typedef struct {
   void (*on_closed)(void *ud);                        /* terminal, fires once */
 } sse_client_callbacks_t;
 
+/* Lifetime and threading contract:
+ * - Everything the config borrows (url, the extra_headers array and its
+ *   strings, all buffers, the transport, userdata) must stay alive and
+ *   unchanged from sse_client_init() until the client reaches
+ *   SSE_STATE_CLOSED. The number of extra headers is fixed at init.
+ * - All callbacks fire on the task calling sse_client_poll(). Never call
+ *   sse_client_poll() from inside a callback, and never free or reuse the
+ *   client's memory inside a callback. Calling sse_client_close() from a
+ *   callback is allowed: it stops further dispatch, and a reconnect_policy
+ *   that closes cannot resurrect the client by returning true.
+ * - sse_client_request_stop() is the only function safe to call from
+ *   another task. */
 typedef struct {
   const char *url;                  /* borrowed; must outlive the client */
   const char *const *extra_headers; /* NULL-terminated "Name: value", or NULL */
