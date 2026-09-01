@@ -207,4 +207,4 @@ A transport is a small vtable (`sse_transport_t` in `eventsource/sse_transport.h
 
 ## License
 
-MIT
+MIT © [Espen Hovlandsdal](https://espen.codes/)
