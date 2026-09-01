@@ -6,7 +6,13 @@
 #include <strings.h> /* strncasecmp */
 
 #define RING_CAP (32 * 1024)
-#define OPEN_TIMEOUT_MS 30000
+#define OPEN_TIMEOUT_MS 30000 /* per redirect hop */
+
+/* Redirects are followed manually, same-origin only: libcurl's
+ * FOLLOWLOCATION forwards caller-supplied custom headers (API keys and
+ * friends) to whatever host the server names. Cross-origin redirects are
+ * surfaced as their 3xx status instead. */
+#define MAX_REDIRECT_HOPS 5
 
 typedef struct {
   CURLM *multi;
@@ -56,12 +62,13 @@ static size_t on_header(char *ptr, size_t sz, size_t nm, void *ud) {
       }
     }
   } else if (n <= 2) {
-    /* Blank line: this header block is complete. It is the FINAL block
-     * unless it was a redirect that CURLOPT_FOLLOWLOCATION will chase
-     * (the next block's HTTP/ line resets the flag either way). An SSE
-     * server may finish its headers and then stay silent until the first
-     * event, so open() must not wait for body bytes. */
-    if (!(t->header_block_status >= 300 && t->header_block_status < 400)) {
+    /* Blank line: this header block is complete. 1xx blocks (e.g. 103
+     * Early Hints) are informational and the real response follows, so
+     * they never complete the open; redirect (3xx) decisions happen in
+     * curl_open_fn. An SSE server may finish its headers and then stay
+     * silent until the first event, so open() must not wait for body
+     * bytes. */
+    if (t->header_block_status >= 200) {
       t->headers_done = 1;
     }
   } else if (n > 12 && strncasecmp(ptr, "Retry-After:", 12) == 0) {
@@ -94,6 +101,34 @@ static int pump(curl_ctx_t *t, int wait_ms) {
     }
   }
   return 0;
+}
+
+/* True when two absolute URLs share scheme, host, and (default-resolved)
+ * port. Anything unparseable is not same-origin. */
+static int same_origin(const char *a, const char *b) {
+  int same = 0;
+  CURLU *ua = curl_url();
+  CURLU *ub = curl_url();
+  char *sa = NULL, *sb = NULL, *ha = NULL, *hb = NULL, *pa = NULL, *pb = NULL;
+  if (ua && ub && curl_url_set(ua, CURLUPART_URL, a, 0) == CURLUE_OK &&
+      curl_url_set(ub, CURLUPART_URL, b, 0) == CURLUE_OK &&
+      curl_url_get(ua, CURLUPART_SCHEME, &sa, 0) == CURLUE_OK &&
+      curl_url_get(ub, CURLUPART_SCHEME, &sb, 0) == CURLUE_OK &&
+      curl_url_get(ua, CURLUPART_HOST, &ha, 0) == CURLUE_OK &&
+      curl_url_get(ub, CURLUPART_HOST, &hb, 0) == CURLUE_OK &&
+      curl_url_get(ua, CURLUPART_PORT, &pa, CURLU_DEFAULT_PORT) == CURLUE_OK &&
+      curl_url_get(ub, CURLUPART_PORT, &pb, CURLU_DEFAULT_PORT) == CURLUE_OK) {
+    same = strcasecmp(sa, sb) == 0 && strcasecmp(ha, hb) == 0 && strcmp(pa, pb) == 0;
+  }
+  curl_free(sa);
+  curl_free(sb);
+  curl_free(ha);
+  curl_free(hb);
+  curl_free(pa);
+  curl_free(pb);
+  if (ua) curl_url_cleanup(ua);
+  if (ub) curl_url_cleanup(ub);
+  return same;
 }
 
 static void teardown(curl_ctx_t *t) {
@@ -130,31 +165,66 @@ static int curl_open_fn(void *vctx, const sse_request_t *req, sse_response_info_
   curl_easy_setopt(t->easy, CURLOPT_WRITEDATA, t);
   curl_easy_setopt(t->easy, CURLOPT_HEADERFUNCTION, on_header);
   curl_easy_setopt(t->easy, CURLOPT_HEADERDATA, t);
-  curl_easy_setopt(t->easy, CURLOPT_FOLLOWLOCATION, 1L);
+  /* Proxy CONNECT responses ("200 Connection established") would otherwise
+   * reach on_header and be mistaken for the final response. */
+  curl_easy_setopt(t->easy, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
+  /* No FOLLOWLOCATION: redirects are followed manually below, same-origin
+   * only, so caller-supplied headers never travel to another origin. */
   curl_easy_setopt(t->easy, CURLOPT_ACCEPT_ENCODING, "identity");
   curl_easy_setopt(t->easy, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
   curl_multi_add_handle(t->multi, t->easy);
 
-  int waited = 0;
-  while (!t->headers_done && !t->body_started && !t->transfer_done &&
-         waited < OPEN_TIMEOUT_MS) {
-    if (pump(t, 100) < 0) {
+  int hops = 0;
+  for (;;) {
+    int waited = 0;
+    while (!t->headers_done && !t->body_started && !t->transfer_done &&
+           waited < OPEN_TIMEOUT_MS) {
+      if (pump(t, 100) < 0) {
+        teardown(t);
+        return -1;
+      }
+      waited += 100;
+    }
+    if (!t->headers_done && !t->body_started && !t->transfer_done) { /* header stall */
       teardown(t);
       return -1;
     }
-    waited += 100;
-  }
-  if (!t->headers_done && !t->body_started && !t->transfer_done) { /* header stall */
-    teardown(t);
-    return -1;
-  }
-  if (t->transfer_done && t->transfer_result != CURLE_OK && !t->body_started) {
-    long code = 0;
-    curl_easy_getinfo(t->easy, CURLINFO_RESPONSE_CODE, &code);
-    if (code == 0) { /* no HTTP response at all: transport-level failure */
+    /* A transfer that failed before its final headers has no usable
+     * response: e.g. a redirect target that refused the connection. This
+     * must be a transport failure (retryable), not a stale 3xx status. */
+    if (t->transfer_done && t->transfer_result != CURLE_OK && !t->headers_done &&
+        !t->body_started) {
       teardown(t);
       return -1;
     }
+    if (t->header_block_status < 300 || t->header_block_status >= 400) {
+      break; /* final response */
+    }
+    /* Manual, same-origin-only redirect. Cross-origin (incl. any scheme or
+     * port change), unparseable, or over-budget redirects surface the 3xx
+     * to the client, whose reconnect policy decides. */
+    char *redir = NULL;
+    char *current = NULL;
+    if (hops >= MAX_REDIRECT_HOPS ||
+        curl_easy_getinfo(t->easy, CURLINFO_REDIRECT_URL, &redir) != CURLE_OK ||
+        !redir ||
+        curl_easy_getinfo(t->easy, CURLINFO_EFFECTIVE_URL, &current) != CURLE_OK ||
+        !current || !same_origin(current, redir)) {
+      break;
+    }
+    hops++;
+    curl_multi_remove_handle(t->multi, t->easy);
+    curl_easy_setopt(t->easy, CURLOPT_URL, redir); /* copied by libcurl */
+    t->r_head = 0;
+    t->r_len = 0;
+    t->body_started = 0;
+    t->headers_done = 0;
+    t->transfer_done = 0;
+    t->transfer_result = CURLE_OK;
+    t->paused = 0;
+    t->header_block_status = 0;
+    t->retry_after_s = -1;
+    curl_multi_add_handle(t->multi, t->easy);
   }
   long status = 0;
   curl_easy_getinfo(t->easy, CURLINFO_RESPONSE_CODE, &status);
