@@ -8,6 +8,13 @@ cross-origin redirect target). Paths on the primary port:
 
   /stream       SSE stream: id/data ticks, keepalive comments, honors
                 Last-Event-ID for resume.
+  /limited      Three events (resuming from Last-Event-ID), then a clean
+                close-delimited EOF (no framing, Connection: close).
+  /limited-chunked  Same as /limited but with chunked transfer encoding and
+                a terminating zero chunk.
+  /echo         First event carries the value of the X-Test request header
+                (data: hdr=<value>), then slow ticks.
+  /redirect-echo  302 with a relative Location to /echo.
   /silent       Completes headers, stays silent for 3 s, then streams.
   /early        Sends a "103 Early Hints" block before the real 200 stream.
   /redirect     302 with a relative Location to /stream (same origin).
@@ -41,12 +48,17 @@ def sse_headers(w):
     w.flush()
 
 
+def chunked_write(w, data):
+    w.write(f"{len(data):X}\r\n".encode() + data + b"\r\n")
+
+
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
         req = self.rfile.readline().decode(errors="replace")
         parts = req.split(" ")
         path = parts[1] if len(parts) > 1 else "/"
         last_event_id = ""
+        x_test = ""
         while True:
             line = self.rfile.readline()
             if not line or line in (b"\r\n", b"\n"):
@@ -54,6 +66,8 @@ class Handler(socketserver.StreamRequestHandler):
             text = line.decode(errors="replace").rstrip()
             if text.lower().startswith("last-event-id:"):
                 last_event_id = text.split(":", 1)[1].strip()
+            elif text.lower().startswith("x-test:"):
+                x_test = text.split(":", 1)[1].strip()
         w = self.wfile
         port = self.server.server_address[1]
         xorigin_port = self.server.xorigin_port
@@ -61,6 +75,37 @@ class Handler(socketserver.StreamRequestHandler):
             if path == "/stream":
                 sse_headers(w)
                 sse_ticks(w, f"tick{port}", last_event_id)
+            elif path == "/limited":
+                # Three events resuming from Last-Event-ID, then a clean
+                # close-delimited EOF (no Content-Length, no chunking).
+                sse_headers(w)
+                n = int(last_event_id) if last_event_id.isdigit() else 0
+                for i in range(n + 1, n + 4):
+                    w.write(f"id: {i}\ndata: lim {i}\n\n".encode())
+                    w.flush()
+                    time.sleep(0.1)
+            elif path == "/limited-chunked":
+                w.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                        b"Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+                w.flush()
+                n = int(last_event_id) if last_event_id.isdigit() else 0
+                for i in range(n + 1, n + 4):
+                    chunked_write(w, f"id: {i}\ndata: lim {i}\n\n".encode())
+                    w.flush()
+                    time.sleep(0.1)
+                w.write(b"0\r\n\r\n")
+                w.flush()
+            elif path == "/echo":
+                sse_headers(w)
+                w.write(f"id: 1\ndata: hdr={x_test}\n\n".encode())
+                w.flush()
+                for i in range(2, 5):
+                    time.sleep(0.5)
+                    w.write(f"id: {i}\ndata: echo {i}\n\n".encode())
+                    w.flush()
+            elif path == "/redirect-echo":
+                w.write(b"HTTP/1.1 302 Found\r\nLocation: /echo\r\n"
+                        b"Content-Length: 0\r\nConnection: close\r\n\r\n")
             elif path == "/silent":
                 sse_headers(w)
                 time.sleep(3)

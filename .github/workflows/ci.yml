@@ -31,3 +31,29 @@ jobs:
           esp_idf_version: v5.2
           target: esp32
           path: examples/esp32
+
+  esp-qemu-test:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:release-v5.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and pytest-embedded
+        run: |
+          git config --global --add safe.directory '*'
+          . $IDF_PATH/export.sh
+          python $IDF_PATH/tools/idf_tools.py install qemu-xtensa
+          pip install pytest pytest-embedded pytest-embedded-idf pytest-embedded-qemu
+      - name: Build QEMU test app
+        run: |
+          . $IDF_PATH/export.sh
+          cd tests/qemu
+          idf.py set-target esp32
+          idf.py build
+      - name: Run on-target integration test in QEMU
+        run: |
+          . $IDF_PATH/export.sh
+          eval "$(python $IDF_PATH/tools/idf_tools.py export)"
+          cd tests/qemu
+          pytest pytest_qemu.py --embedded-services idf,qemu --app-path . \
+            --qemu-extra-args "-nic user,model=open_eth"
