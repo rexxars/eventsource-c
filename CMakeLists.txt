@@ -36,3 +36,19 @@ if(SSE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
+
+option(SSE_BUILD_FUZZERS "Build libFuzzer harnesses (needs clang)" OFF)
+if(SSE_BUILD_FUZZERS)
+  add_executable(fuzz_parser fuzz/fuzz_parser.c src/sse_parser.c)
+  target_include_directories(fuzz_parser PRIVATE include)
+  target_compile_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address,undefined -g -O1)
+  target_link_options(fuzz_parser PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()
+
+# Smoke driver for toolchains without libFuzzer (e.g. Apple clang):
+# replays crash files and runs a deterministic random corpus.
+option(SSE_BUILD_FUZZ_SMOKE "Build the standalone fuzz smoke driver" OFF)
+if(SSE_BUILD_FUZZ_SMOKE)
+  add_executable(fuzz_smoke fuzz/fuzz_parser.c fuzz/standalone_main.c)
+  target_link_libraries(fuzz_smoke PRIVATE eventsource)
+endif()
