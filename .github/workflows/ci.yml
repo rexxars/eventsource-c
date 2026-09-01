@@ -43,7 +43,11 @@ jobs:
           git config --global --add safe.directory '*'
           . $IDF_PATH/export.sh
           python $IDF_PATH/tools/idf_tools.py install qemu-xtensa
-          pip install pytest pytest-embedded pytest-embedded-idf pytest-embedded-qemu
+          # pytest-embedded 1.x matches IDF 5.2's pinned esptool v4 (2.x emits
+          # esptool-v5 command spellings that v4 rejects); pytest 9 postdates
+          # the 1.x plugins.
+          pip install "pytest~=8.3" "pytest-embedded~=1.16" \
+            "pytest-embedded-idf~=1.16" "pytest-embedded-qemu~=1.16"
       - name: Build QEMU test app
         run: |
           . $IDF_PATH/export.sh

@@ -2,7 +2,7 @@
 
 Runs the ESP-IDF port inside Espressif's QEMU (emulated ESP32 with the OpenCores ethernet MAC) against `tools/sse_fixture_server.py` on the host. Covers what the host suites cannot: the `esp_http_client` EOF-vs-timeout mapping (close-delimited and chunked streams), `Last-Event-ID` resume across a reconnect, same-origin redirect following with request headers persisting across the reopen, and the cross-origin redirect refusal.
 
-Requires ESP-IDF (>= 5.2) with the QEMU tool installed (`python $IDF_PATH/tools/idf_tools.py install qemu-xtensa`) and `pip install pytest pytest-embedded-idf pytest-embedded-qemu`.
+Requires ESP-IDF (>= 5.2) with the QEMU tool installed (`python $IDF_PATH/tools/idf_tools.py install qemu-xtensa`) and `pip install "pytest~=8.3" "pytest-embedded-idf~=1.16" "pytest-embedded-qemu~=1.16"` (the 1.x series matches IDF 5.2's pinned esptool v4).
 
 ```sh
 cd tests/qemu
