@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
-if(ESP_PLATFORM)
+# True in every ESP-IDF component context, including the early requirement
+# expansion pass (which may run before ESP_PLATFORM is set); false for plain
+# host CMake.
+if(ESP_PLATFORM OR COMMAND idf_component_register)
   idf_component_register(
     SRCS
       src/sse_parser.c
