@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 if(ESP_PLATFORM)
   # ESP-IDF component build. Sources grow in Task 12.
   idf_component_register(
-    SRCS src/sse_parser.c
+    SRCS src/sse_parser.c src/sse_client.c
     INCLUDE_DIRS include
   )
   return()
@@ -28,7 +28,7 @@ if(SSE_SANITIZE)
   add_link_options(-fsanitize=${SSE_SANITIZERS})
 endif()
 
-add_library(eventsource src/sse_parser.c)
+add_library(eventsource src/sse_parser.c src/sse_client.c)
 target_include_directories(eventsource PUBLIC include)
 target_compile_options(eventsource PRIVATE -Wall -Wextra -Werror)
 
