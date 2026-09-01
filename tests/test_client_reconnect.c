@@ -187,5 +187,22 @@ int main(void) {
     OK(strstr(clog, "open(1)\n") != NULL);
   }
 
+  /* Retry-After seconds are multiplied by 1000: a large header value must
+   * not wrap in 32-bit arithmetic BELOW the clamp (4300000s * 1000 wraps to
+   * ~84 minutes in uint32); it must clamp to INT32_MAX instead. */
+  fresh();
+  mock.n_conns = 2;
+  sse_conn(0, 503, "", NULL, SSE_READ_EOF);
+  mock.conns[0].retry_after_s = 4300000;
+  sse_conn(1, 200, "text/event-stream", "data: x\n\n", SSE_READ_TIMEOUT);
+  {
+    sse_client_config_t cfg = base_cfg();
+    OK_INT(sse_client_init(&cl, &cfg), 0);
+    pump(5);
+    OK(strstr(clog, "err(1,503,1,2147483647)\n") != NULL);
+    OK(sse_client_poll(&cl) > 0);
+    OK_INT(mock.open_calls, 1);
+  }
+
   T_END();
 }

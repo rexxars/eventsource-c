@@ -136,22 +136,26 @@ static void fail_conn(sse_client_t *c, sse_error_reason_t reason, int status,
     to_closed(c);
     return;
   }
-  uint32_t delay;
+  /* Compute the whole delay in 64 bits: retry_after_s * 1000 and the jitter
+   * addition can both wrap uint32 for remotely supplied values, sidestepping
+   * any later clamp. */
+  uint64_t delay64;
   if (retry_after_s >= 0) {
-    delay = (uint32_t)retry_after_s * 1000u;
+    delay64 = (uint64_t)retry_after_s * 1000u;
   } else if (c->cfg.max_retry_ms == 0) {
-    delay = c->base_retry_ms;
+    delay64 = c->base_retry_ms;
   } else {
     unsigned sh = c->attempts > 15 ? 15 : c->attempts;
     uint64_t d = (uint64_t)c->base_retry_ms << sh;
-    delay = d > c->cfg.max_retry_ms ? c->cfg.max_retry_ms : (uint32_t)d;
+    delay64 = d > c->cfg.max_retry_ms ? c->cfg.max_retry_ms : d;
   }
   if (c->cfg.jitter_pct) {
-    delay += (uint32_t)(((uint64_t)delay * (prng_next(c) % (c->cfg.jitter_pct + 1u))) / 100u);
+    delay64 += (delay64 * (prng_next(c) % (c->cfg.jitter_pct + 1u))) / 100u;
   }
-  /* keeps deadline arithmetic wrap-safe: WAITING_RETRY casts (deadline - now)
+  /* Single clamp, after all arithmetic: WAITING_RETRY casts (deadline - now)
    * to int32_t, so a delay >= 2^31 ms would wrap negative and fire early. */
-  if (delay > (uint32_t)INT32_MAX) delay = (uint32_t)INT32_MAX;
+  uint32_t delay =
+      delay64 > (uint64_t)INT32_MAX ? (uint32_t)INT32_MAX : (uint32_t)delay64;
   c->attempts++;
   c->retry_deadline = c->cfg.now_ms() + delay;
   c->state = SSE_STATE_WAITING_RETRY;
