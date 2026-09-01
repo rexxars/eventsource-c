@@ -210,6 +210,10 @@ int sse_client_init(sse_client_t *c, const sse_client_config_t *cfg) {
   if (!cfg->transport->open || !cfg->transport->read || !cfg->transport->close) return -1;
   if (!cfg->buffers.data_buf || cfg->buffers.data_buf_len < 2) return -1;
   if (!cfg->buffers.id_buf || cfg->buffers.id_buf_len < 2) return -1;
+  /* Every id the parser can accept (id_buf_len - 1 chars) must fit the
+   * persisted lastEventId buffer; otherwise long ids would be silently
+   * dropped and reconnects would resume from a stale position. */
+  if (cfg->buffers.id_buf_len > SSE_CLIENT_ID_MAX + 1) return -1;
   if (!cfg->buffers.event_buf || cfg->buffers.event_buf_len < 2) return -1;
   if (!cfg->rx_buf || cfg->rx_buf_len == 0) return -1;
   size_t extra = 0;

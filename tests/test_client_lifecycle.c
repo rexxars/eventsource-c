@@ -208,6 +208,16 @@ int main(void) {
     OK_INT(sse_client_state(&cl), SSE_STATE_CLOSED);
   }
 
+  /* an id buffer larger than the persisted-id cap is rejected at init:
+   * otherwise long accepted ids would silently not survive reconnects */
+  {
+    static char big_ib[SSE_CLIENT_ID_MAX + 2];
+    sse_client_config_t cfg = base_cfg();
+    cfg.buffers.id_buf = big_ib;
+    cfg.buffers.id_buf_len = sizeof big_ib;
+    OK_INT(sse_client_init(&cl, &cfg), -1);
+  }
+
   /* extra_headers grown (wrongly) after init must not overflow the internal
    * header array: only the count validated at init is sent */
   fresh();

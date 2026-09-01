@@ -68,7 +68,10 @@ typedef struct {
   uint32_t read_timeout_ms;  /* max block per poll, 0 -> 500 */
   bool skip_content_type_check; /* false -> require text/event-stream */
 
-  sse_parser_buffers_t buffers; /* caller-provided parser buffers */
+  /* Caller-provided parser buffers. id_buf_len must be at most
+   * SSE_CLIENT_ID_MAX + 1 so every accepted id can be persisted as the
+   * lastEventId (init fails otherwise). */
+  sse_parser_buffers_t buffers;
   uint8_t *rx_buf;
   size_t rx_buf_len;
 
