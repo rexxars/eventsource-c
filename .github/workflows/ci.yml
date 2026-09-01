@@ -1,0 +1,33 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+      - run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -B build-fuzz -DSSE_BUILD_FUZZERS=ON -DSSE_BUILD_TESTS=OFF -DSSE_BUILD_POSIX_PORT=OFF -DSSE_SANITIZE=OFF -DCMAKE_C_COMPILER=clang
+      - run: cmake --build build-fuzz
+      - run: ./build-fuzz/fuzz_parser -max_total_time=60
+
+  esp-idf-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.2
+          target: esp32
+          path: examples/esp32

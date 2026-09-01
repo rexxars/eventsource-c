@@ -1,0 +1,15 @@
+name: Publish to ESP Component Registry
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: espressif/upload-components-ci-action@v1
+        with:
+          name: eventsource
+          namespace: rexxars
+          api_token: ${{ secrets.IDF_COMPONENT_API_TOKEN }}
