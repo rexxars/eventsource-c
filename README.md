@@ -46,7 +46,7 @@ void start_stream(void) {
 }
 ```
 
-See `examples/esp32` for a complete application and `examples/posix` for the host variant (libcurl).
+See `examples/esp32` for a complete application and `examples/posix` for the host variant (libcurl 7.62 or newer).
 
 ## Buffer sizing
 

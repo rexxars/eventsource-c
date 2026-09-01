@@ -32,6 +32,9 @@ static void on_sigint(int sig) {
 }
 
 int main(int argc, char **argv) {
+  /* Line-buffer stdout so piped/redirected output (scripts, integration
+   * tests) sees events as they arrive, not when the block buffer fills. */
+  setvbuf(stdout, NULL, _IOLBF, 0);
   const char *url = argc > 1 ? argv[1] : "http://127.0.0.1:8080/stream";
   sse_transport_t *tr = sse_transport_curl_new();
   if (!tr) return 1;

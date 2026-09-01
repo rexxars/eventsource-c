@@ -59,7 +59,8 @@ endif()
 
 option(SSE_BUILD_POSIX_PORT "Build the libcurl POSIX transport + example" ON)
 if(SSE_BUILD_POSIX_PORT)
-  find_package(CURL REQUIRED)
+  # 7.62 introduced the CURLU URL API, used for same-origin redirect checks.
+  find_package(CURL 7.62 REQUIRED)
   add_library(eventsource_posix ports/posix/sse_transport_curl.c ports/posix/sse_clock_posix.c)
   target_include_directories(eventsource_posix PUBLIC ports/posix)
   target_link_libraries(eventsource_posix PUBLIC eventsource CURL::libcurl)
@@ -67,4 +68,17 @@ if(SSE_BUILD_POSIX_PORT)
 
   add_executable(example_posix examples/posix/main.c)
   target_link_libraries(example_posix PRIVATE eventsource_posix)
+
+  # Live integration suite: fixture server + example client, covering the
+  # transport behaviors unit tests cannot reach (redirect policy, 1xx
+  # blocks, header-only opens, big redirect bodies, 204).
+  find_program(SSE_PYTHON3 python3)
+  if(SSE_BUILD_TESTS AND SSE_PYTHON3)
+    add_test(NAME posix_integration
+             COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration_posix.sh
+                     $<TARGET_FILE:example_posix>
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/sse_fixture_server.py
+                     ${SSE_PYTHON3})
+    set_tests_properties(posix_integration PROPERTIES TIMEOUT 120)
+  endif()
 endif()
