@@ -1,4 +1,0 @@
-dependencies:
-  rexxars/eventsource:
-    version: "*"
-    override_path: "../../../"
