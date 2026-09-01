@@ -80,6 +80,13 @@ static void value_byte(sse_parser_t *p, uint8_t b) {
       return;
     case F_EVENT:
       if (p->event_invalid) return;
+      if (b == 0) {
+        /* The public event type is a NUL-terminated string with no length:
+         * accepting "admin\0evil" would be observable as "admin". */
+        p->event_invalid = true;
+        emit_perr(p, SSE_PARSE_ERR_EVENT_TYPE_INVALID);
+        return;
+      }
       if (p->event_len + 1 >= p->buf.event_buf_len) {
         p->event_invalid = true;
         emit_perr(p, SSE_PARSE_ERR_EVENT_TYPE_TOO_LARGE);

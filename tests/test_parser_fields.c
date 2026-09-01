@@ -39,6 +39,12 @@ int main(void) {
   sse_parser_feed(&p, "id: 4\x00" "2\ndata: x\n\n", 17);
   OK_STR(r.log, "err(1)\nevent(-,-,1,x)\n"); /* 1 == SSE_PARSE_ERR_ID_INVALID */
 
+  /* event type containing NUL is dropped with an error: "admin\0evil" must
+   * not be observable as "admin" through the NUL-terminated public type */
+  fresh(&p);
+  sse_parser_feed(&p, "event: a\x00" "b\ndata: x\n\n", 20);
+  OK_STR(r.log, "err(5)\nevent(-,-,1,x)\n"); /* 5 == SSE_PARSE_ERR_EVENT_TYPE_INVALID */
+
   /* id does not persist into the next block (client owns persistence) */
   fresh(&p);
   feed_str(&p, "id: 1\ndata: a\n\ndata: b\n\n");

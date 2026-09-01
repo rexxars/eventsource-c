@@ -23,7 +23,8 @@ typedef enum {
   SSE_PARSE_ERR_ID_INVALID,         /* id had a NUL byte or exceeded id buffer; field dropped */
   SSE_PARSE_ERR_EVENT_TYPE_TOO_LARGE, /* event type exceeded buffer; field dropped */
   SSE_PARSE_ERR_INVALID_RETRY,      /* retry value not all-ASCII-digits; field dropped */
-  SSE_PARSE_ERR_UNKNOWN_FIELD       /* informational; line skipped */
+  SSE_PARSE_ERR_UNKNOWN_FIELD,      /* informational; line skipped */
+  SSE_PARSE_ERR_EVENT_TYPE_INVALID  /* event type contained a NUL byte; field dropped */
 } sse_parse_error_t;
 
 typedef struct {
