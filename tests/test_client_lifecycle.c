@@ -28,6 +28,14 @@ static char db[1024], ib[128], eb[64];
 static uint8_t rx[256];
 static sse_client_t cl;
 
+/* Closes the client from inside its own on_message callback, on every call:
+ * used to pin that dispatch of further buffered events stops immediately. */
+static void c_msg_close(void *ud, const sse_message_t *m) {
+  (void)ud;
+  cadd("msg(%s,%s,%s)\n", m->event, m->last_event_id, m->data);
+  sse_client_close(&cl);
+}
+
 static sse_client_config_t base_cfg(void) {
   sse_client_config_t cfg = {0};
   cfg.url = "http://test.local/stream";
@@ -165,6 +173,20 @@ int main(void) {
     g_now += 500;
     uint32_t hint2 = sse_client_poll(&cl);
     OK(hint2 > 0 && hint2 <= 1500);
+  }
+
+  /* close() from inside on_message must stop dispatch of the remaining
+   * buffered events in the same read: on_closed is the final signal. */
+  fresh();
+  mock.n_conns = 1;
+  sse_conn(0, 200, "text/event-stream", "data: a\n\ndata: b\n\n", SSE_READ_TIMEOUT);
+  {
+    sse_client_config_t cfg = base_cfg();
+    cfg.callbacks.on_message = c_msg_close;
+    OK_INT(sse_client_init(&cl, &cfg), 0);
+    pump(10);
+    OK_STR(clog, "open(0)\nmsg(message,,a)\nclosed\n");
+    OK_INT(sse_client_state(&cl), SSE_STATE_CLOSED);
   }
 
   T_END();

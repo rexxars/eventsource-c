@@ -20,8 +20,15 @@ static esp_err_t on_http_event(esp_http_client_event_t *evt) {
     if (strcasecmp(evt->header_key, "content-type") == 0) {
       snprintf(t->content_type, sizeof t->content_type, "%s", evt->header_value);
     } else if (strcasecmp(evt->header_key, "retry-after") == 0) {
-      long v = strtol(evt->header_value, NULL, 10);
-      if (v >= 0) t->retry_after_s = (int32_t)v;
+      /* evt->header_value is NUL-terminated. Only parse delta-seconds
+       * (leading ASCII digit); HTTP-date form is left as absent, matching
+       * the curl port's on_header. */
+      const char *p = evt->header_value;
+      while (*p == ' ') p++;
+      if (*p >= '0' && *p <= '9') {
+        long v = strtol(p, NULL, 10);
+        if (v >= 0) t->retry_after_s = (int32_t)v;
+      }
     }
   }
   return ESP_OK;

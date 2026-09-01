@@ -168,5 +168,24 @@ int main(void) {
     OK(d >= 1000 && d <= 1100);
   }
 
+  /* delay clamp: a server-controlled retry >= 2^31 ms must not wrap
+   * negative and cause an instant reconnect loop. */
+  fresh();
+  mock.n_conns = 2;
+  sse_conn(0, 200, "text/event-stream", "retry: 3000000000\ndata: x\n\n", SSE_READ_EOF);
+  sse_conn(1, 200, "text/event-stream", "data: y\n\n", SSE_READ_TIMEOUT);
+  {
+    sse_client_config_t cfg = base_cfg();
+    OK_INT(sse_client_init(&cl, &cfg), 0);
+    pump(10);
+    OK_INT(sse_client_state(&cl), SSE_STATE_WAITING_RETRY);
+    OK(strstr(clog, "err(0,0,1,2147483647)\n") != NULL);
+    OK(sse_client_poll(&cl) > 0);
+    OK_INT(mock.open_calls, 1);
+    g_now += 2147483647u + 1u;
+    pump(10);
+    OK(strstr(clog, "open(1)\n") != NULL);
+  }
+
   T_END();
 }

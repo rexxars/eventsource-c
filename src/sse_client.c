@@ -18,6 +18,7 @@ static void bridge_on_retry(void *ud, uint32_t ms) {
 
 static void bridge_on_event(void *ud, const sse_parser_event_t *ev) {
   sse_client_t *c = ud;
+  if (c->state != SSE_STATE_OPEN) return; /* close() during dispatch stops it */
   c->attempts = 0; /* healthy connection: reset flap counter */
   if (!c->cfg.callbacks.on_message) return;
   sse_message_t m;
@@ -30,6 +31,7 @@ static void bridge_on_event(void *ud, const sse_parser_event_t *ev) {
 
 static void bridge_on_perr(void *ud, sse_parse_error_t err) {
   sse_client_t *c = ud;
+  if (c->state != SSE_STATE_OPEN) return; /* close() during dispatch stops it */
   if (err != SSE_PARSE_ERR_DATA_TOO_LARGE) return;
   if (!c->cfg.callbacks.on_error) return;
   sse_error_t e = {SSE_ERR_MESSAGE_TOO_LARGE, 0, true, 0}; /* stream continues */
@@ -134,6 +136,9 @@ static void fail_conn(sse_client_t *c, sse_error_reason_t reason, int status,
   if (c->cfg.jitter_pct) {
     delay += (uint32_t)(((uint64_t)delay * (prng_next(c) % (c->cfg.jitter_pct + 1u))) / 100u);
   }
+  /* keeps deadline arithmetic wrap-safe: WAITING_RETRY casts (deadline - now)
+   * to int32_t, so a delay >= 2^31 ms would wrap negative and fire early. */
+  if (delay > (uint32_t)INT32_MAX) delay = (uint32_t)INT32_MAX;
   c->attempts++;
   c->retry_deadline = c->cfg.now_ms() + delay;
   c->state = SSE_STATE_WAITING_RETRY;
