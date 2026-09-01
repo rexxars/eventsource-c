@@ -19,6 +19,7 @@
 
 static void bridge_on_id(void *ud, const char *id, size_t len) {
   sse_client_t *c = ud;
+  if (c->state != SSE_STATE_OPEN) return; /* close() during dispatch freezes state */
   if (len <= SSE_CLIENT_ID_MAX) {
     memcpy(c->last_event_id, id, len + 1); /* parser NUL-terminates */
     c->last_event_id_len = len;
@@ -26,7 +27,9 @@ static void bridge_on_id(void *ud, const char *id, size_t len) {
 }
 
 static void bridge_on_retry(void *ud, uint32_t ms) {
-  ((sse_client_t *)ud)->base_retry_ms = ms;
+  sse_client_t *c = ud;
+  if (c->state != SSE_STATE_OPEN) return; /* close() during dispatch freezes state */
+  c->base_retry_ms = ms;
 }
 
 static void bridge_on_event(void *ud, const sse_parser_event_t *ev) {
@@ -251,7 +254,10 @@ uint32_t sse_client_poll(sse_client_t *c) {
     case SSE_STATE_IDLE:
     case SSE_STATE_CONNECTING:
       do_connect(c);
-      return 0;
+      /* Callbacks fired during the attempt (on_error, the policy hook,
+       * on_closed) may have closed the client; honor the CLOSED contract
+       * in the same invocation. */
+      return c->state == SSE_STATE_CLOSED ? UINT32_MAX : 0;
     case SSE_STATE_WAITING_RETRY: {
       int32_t remain = (int32_t)(c->retry_deadline - c->cfg.now_ms());
       if (remain <= 0) {
@@ -272,21 +278,24 @@ uint32_t sse_client_poll(sse_client_t *c) {
           /* A transport must never report more bytes than the buffer holds;
            * feeding that count onward would read past caller memory. */
           fail_conn(c, SSE_ERR_TRANSPORT, 0, -1);
-          return 0;
+          return c->state == SSE_STATE_CLOSED ? UINT32_MAX : 0;
         }
         c->last_rx_ms = c->cfg.now_ms();
         sse_parser_feed(&c->parser, c->cfg.rx_buf, (size_t)r);
-        return 0;
+        /* A callback during dispatch may have closed the client; honor the
+         * CLOSED contract in the same invocation. */
+        return c->state == SSE_STATE_CLOSED ? UINT32_MAX : 0;
       }
       if (r == SSE_READ_TIMEOUT) {
         if (c->cfg.idle_timeout_ms != 0 &&
             (uint32_t)(c->cfg.now_ms() - c->last_rx_ms) >= c->cfg.idle_timeout_ms) {
           fail_conn(c, SSE_ERR_IDLE_TIMEOUT, 0, -1);
+          if (c->state == SSE_STATE_CLOSED) return UINT32_MAX;
         }
         return c->cfg.read_timeout_ms;
       }
       fail_conn(c, SSE_ERR_TRANSPORT, 0, -1); /* EOF or error */
-      return 0;
+      return c->state == SSE_STATE_CLOSED ? UINT32_MAX : 0;
     }
   }
   return 0;

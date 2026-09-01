@@ -195,17 +195,22 @@ int main(void) {
   }
 
   /* close() from inside on_message must stop dispatch of the remaining
-   * buffered events in the same read: on_closed is the final signal. */
+   * buffered events in the same read: on_closed is the final signal, the
+   * SAME poll invocation reports CLOSED, and id/retry lines after the
+   * close point must not mutate frozen state. */
   fresh();
   mock.n_conns = 1;
-  sse_conn(0, 200, "text/event-stream", "data: a\n\ndata: b\n\n", SSE_READ_TIMEOUT);
+  sse_conn(0, 200, "text/event-stream", "data: a\n\nid: 9\nretry: 9\ndata: b\n\n",
+           SSE_READ_TIMEOUT);
   {
     sse_client_config_t cfg = base_cfg();
     cfg.callbacks.on_message = c_msg_close;
     OK_INT(sse_client_init(&cl, &cfg), 0);
-    pump(10);
+    OK_INT(sse_client_poll(&cl), 0); /* connect */
+    OK(sse_client_poll(&cl) == UINT32_MAX); /* dispatch + close, same poll */
     OK_STR(clog, "open(0)\nmsg(message,,a)\nclosed\n");
     OK_INT(sse_client_state(&cl), SSE_STATE_CLOSED);
+    OK_STR(sse_client_last_event_id(&cl), ""); /* id: 9 after close ignored */
   }
 
   /* an id buffer larger than the persisted-id cap is rejected at init:

@@ -212,7 +212,8 @@ int main(void) {
     sse_client_config_t cfg = base_cfg();
     cfg.reconnect_policy = policy_close_then_retry;
     OK_INT(sse_client_init(&cl, &cfg), 0);
-    pump(5);
+    /* connect fails, hook closes: the SAME poll invocation reports CLOSED */
+    OK(sse_client_poll(&cl) == UINT32_MAX);
     OK_STR(clog, "hook\nclosed\n");
     OK_INT(sse_client_state(&cl), SSE_STATE_CLOSED);
     OK(sse_client_poll(&cl) == UINT32_MAX);
