@@ -37,7 +37,7 @@ Server-Sent Events (EventSource) client for embedded C. Spec-accurate SSE parsin
       sse_client_start_task(&client, "sse", 6144, 5);
     }
 
-See `examples/esp32` for a complete application and `examples/posix` for the host variant (libcurl). Design details live in PROPOSAL.md.
+See `examples/esp32` for a complete application and `examples/posix` for the host variant (libcurl).
 
 ## Buffer sizing
 
