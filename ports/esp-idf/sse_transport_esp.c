@@ -3,10 +3,16 @@
 #include "esp_http_client.h"
 #include <errno.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h> /* strcasecmp */
+
+/* The manual open/fetch_headers flow does not auto-follow redirects (only
+ * esp_http_client_perform does), so this transport follows them itself,
+ * bounded to avoid redirect loops. */
+#define ESP_MAX_REDIRECT_HOPS 5
 
 typedef struct {
   esp_http_client_handle_t hc;
@@ -57,6 +63,7 @@ static int esp_open_fn(void *vctx, const sse_request_t *req, sse_response_info_t
       .timeout_ms = 10000, /* connect + header timeout; reads adjust below */
       .crt_bundle_attach = esp_crt_bundle_attach,
       .buffer_size = 1024,
+      .disable_auto_redirect = true, /* this transport follows redirects itself */
   };
   t->hc = esp_http_client_init(&cfg);
   if (!t->hc) return -1;
@@ -74,15 +81,29 @@ static int esp_open_fn(void *vctx, const sse_request_t *req, sse_response_info_t
     esp_http_client_set_header(t->hc, name, val);
   }
 
-  if (esp_http_client_open(t->hc, 0) != ESP_OK) {
-    esp_teardown(t);
-    return -1;
+  int status = 0;
+  for (int hop = 0;; hop++) {
+    if (esp_http_client_open(t->hc, 0) != ESP_OK) {
+      esp_teardown(t);
+      return -1;
+    }
+    if (esp_http_client_fetch_headers(t->hc) < 0) {
+      esp_teardown(t);
+      return -1;
+    }
+    status = esp_http_client_get_status_code(t->hc);
+    bool is_redirect = status == 301 || status == 302 || status == 303 ||
+                       status == 307 || status == 308;
+    if (!is_redirect || hop >= ESP_MAX_REDIRECT_HOPS) break;
+    /* Rewrite the handle's URL from the Location header and reconnect. If
+     * there is no usable Location, report the 3xx as-is and let the client's
+     * reconnect policy decide. Request headers persist on the handle. */
+    if (esp_http_client_set_redirection(t->hc) != ESP_OK) break;
+    t->content_type[0] = '\0'; /* final block's captured headers win */
+    t->retry_after_s = -1;
+    esp_http_client_close(t->hc);
   }
-  if (esp_http_client_fetch_headers(t->hc) < 0) {
-    esp_teardown(t);
-    return -1;
-  }
-  out->status_code = esp_http_client_get_status_code(t->hc);
+  out->status_code = status;
   snprintf(out->content_type, sizeof out->content_type, "%s", t->content_type);
   out->retry_after_s = t->retry_after_s;
   t->configured_timeout_ms = 0; /* force set_timeout on first read */
