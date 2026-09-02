@@ -8,6 +8,7 @@
 #include "sse_client_task.h"
 #include "sse_transport_esp.h"
 
+#include "cJSON.h"
 #include "display.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -22,7 +23,9 @@
 
 static const char *TAG = "sse_tdisplay";
 
-static char db[8192], ib[128], eb[64];
+/* id_buf tracks the raised SSE_CLIENT_ID_MAX (see the project CMakeLists);
+ * init requires id_buf_len <= SSE_CLIENT_ID_MAX + 1. */
+static char db[8192], ib[SSE_CLIENT_ID_MAX + 1], eb[64];
 static uint8_t rx[1024];
 static sse_client_t client;
 
@@ -39,7 +42,7 @@ static struct {
   unsigned events;
   unsigned dropped; /* oversized events discarded by the parser */
   char last_event[28];
-  char last_id[28];
+  char last_id[101]; /* display keeps a prefix; render ellipsizes further */
   char last_data[28 * 3 + 1];
   uint16_t sse_color;
   uint32_t last_render_ms;
@@ -49,6 +52,18 @@ static void copy_trunc(char *dst, size_t cap, const char *src, size_t len) {
   size_t n = len < cap - 1 ? len : cap - 1;
   memcpy(dst, src, n);
   dst[n] = '\0';
+}
+
+/* Copies src into dst, replacing the tail with "..." when it exceeds
+ * `cols` characters. dst must hold cols + 1 bytes. */
+static void ellipsize(char *dst, size_t cols, const char *src) {
+  size_t len = strlen(src);
+  if (len <= cols) {
+    memcpy(dst, src, len + 1);
+    return;
+  }
+  memcpy(dst, src, cols - 3);
+  memcpy(dst + cols - 3, "...", 4);
 }
 
 static void render(void) {
@@ -62,8 +77,12 @@ static void render(void) {
   display_text(2, 46, 1, COL_WHITE, line);
   snprintf(line, sizeof line, "type: %s", st.last_event);
   display_text(2, 58, 1, COL_YELLOW, line);
-  snprintf(line, sizeof line, "id: %s", st.last_id);
-  display_text(2, 70, 1, COL_GREY, line);
+  {
+    char idpart[27]; /* 30-column display minus the "id: " prefix */
+    ellipsize(idpart, 26, st.last_id);
+    snprintf(line, sizeof line, "id: %s", idpart);
+    display_text(2, 70, 1, COL_GREY, line);
+  }
   /* last_data wrapped over three 28-char rows */
   size_t len = strlen(st.last_data);
   for (int row = 0; row < 3; row++) {
@@ -86,15 +105,35 @@ static void on_open(void *ud, unsigned rc) {
   render();
 }
 
+/* For JSON payloads with "user" and "title" string fields (e.g. Wikimedia's
+ * recentchange stream), summarize as "[user] title" - it demos far better
+ * than the payload's constant prefix. Anything else keeps the raw prefix. */
+static void summarize_data(const char *data, size_t len) {
+  cJSON *root = cJSON_Parse(data);
+  if (root) {
+    const cJSON *user = cJSON_GetObjectItemCaseSensitive(root, "user");
+    const cJSON *title = cJSON_GetObjectItemCaseSensitive(root, "title");
+    if (cJSON_IsString(user) && user->valuestring && cJSON_IsString(title) &&
+        title->valuestring) {
+      snprintf(st.last_data, sizeof st.last_data, "[%s] %s", user->valuestring,
+               title->valuestring);
+      cJSON_Delete(root);
+      return;
+    }
+    cJSON_Delete(root);
+  }
+  copy_trunc(st.last_data, sizeof st.last_data, data, len);
+}
+
 static void on_message(void *ud, const sse_message_t *m) {
   (void)ud;
   st.events++;
   copy_trunc(st.last_event, sizeof st.last_event, m->event, strlen(m->event));
   copy_trunc(st.last_id, sizeof st.last_id, m->last_event_id,
              strlen(m->last_event_id));
-  copy_trunc(st.last_data, sizeof st.last_data, m->data, m->data_len);
-  ESP_LOGI(TAG, "[%s] %u bytes: %.60s", m->event, (unsigned)m->data_len,
-           m->data);
+  summarize_data(m->data, m->data_len);
+  ESP_LOGI(TAG, "[%s] %u bytes: %s", m->event, (unsigned)m->data_len,
+           st.last_data);
   /* Throttle rendering: a full-frame flush per event would fall behind on
    * busy streams (Wikimedia's recentchange peaks at dozens per second). */
   if ((uint32_t)(now_ms() - st.last_render_ms) >= 250) {
