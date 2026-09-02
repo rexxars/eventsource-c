@@ -40,7 +40,8 @@ static struct {
   char wifi[28];
   char sse[28];
   unsigned events;
-  unsigned dropped; /* oversized events discarded by the parser */
+  unsigned dropped;    /* oversized events discarded by the parser */
+  unsigned reconnects; /* completed disconnect+reconnect cycles */
   char last_event[28];
   char last_id[101]; /* display keeps a prefix; render ellipsizes further */
   char last_data[28 * 3 + 1];
@@ -106,11 +107,18 @@ static void render(void) {
 
 /* ---- SSE callbacks ---- */
 
-static void on_open(void *ud, unsigned rc) {
+/* `attempts` is how many failed connection attempts preceded this open, not
+ * a reconnect counter - count actual disconnect+reconnect cycles ourselves:
+ * every open after the first one means a disconnect happened in between. */
+static void on_open(void *ud, unsigned attempts) {
   (void)ud;
-  snprintf(st.sse, sizeof st.sse, "sse: open (reconnects: %u)", rc);
+  static bool first_open = true;
+  if (!first_open) st.reconnects++;
+  first_open = false;
+  snprintf(st.sse, sizeof st.sse, "sse: open (reconnects: %u)", st.reconnects);
   st.sse_color = COL_GREEN;
-  ESP_LOGI(TAG, "open (reconnect_count=%u)", rc);
+  ESP_LOGI(TAG, "open (reconnects=%u, attempts before this open=%u)",
+           st.reconnects, attempts);
   render();
 }
 
