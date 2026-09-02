@@ -18,19 +18,23 @@ typedef struct {
   size_t data_len;
 } sse_parser_event_t;
 
+/* A discarded block delivers no event, but its id still commits (on_id) and
+ * retry fields remain honored: Last-Event-ID tracks stream position, so a
+ * reconnect resumes past the discarded event instead of replaying it. */
 typedef enum {
-  SSE_PARSE_ERR_DATA_TOO_LARGE,     /* block exceeded data buffer; block discarded */
+  SSE_PARSE_ERR_DATA_TOO_LARGE,     /* data exceeded data buffer; block discarded */
   SSE_PARSE_ERR_ID_INVALID,         /* id had a NUL byte or exceeded id buffer; field dropped */
-  SSE_PARSE_ERR_EVENT_TYPE_TOO_LARGE, /* event type exceeded buffer; field dropped */
+  SSE_PARSE_ERR_EVENT_TYPE_TOO_LARGE, /* event type exceeded buffer; block discarded */
   SSE_PARSE_ERR_INVALID_RETRY,      /* retry value not all-ASCII-digits; field dropped */
   SSE_PARSE_ERR_UNKNOWN_FIELD,      /* informational; line skipped */
-  SSE_PARSE_ERR_EVENT_TYPE_INVALID  /* event type contained a NUL byte; field dropped */
+  SSE_PARSE_ERR_EVENT_TYPE_INVALID  /* event type contained a NUL byte; block discarded */
 } sse_parse_error_t;
 
 typedef struct {
   void *userdata;
   void (*on_event)(void *ud, const sse_parser_event_t *ev);
-  void (*on_id)(void *ud, const char *id, size_t len); /* block end, before on_event */
+  void (*on_id)(void *ud, const char *id, size_t len); /* block end, before
+                                    on_event; also fires for discarded blocks */
   void (*on_retry)(void *ud, uint32_t retry_ms);
   void (*on_error)(void *ud, sse_parse_error_t err);
 } sse_parser_callbacks_t;
@@ -54,10 +58,9 @@ typedef struct sse_parser {
   uint8_t name_len;
   size_t data_len;
   size_t data_lines;
-  bool data_overflow;
+  bool block_discarded;
   size_t event_len;
   bool has_event;
-  bool event_invalid;
   size_t id_len;
   bool has_id;
   bool id_invalid;

@@ -162,6 +162,48 @@ int main(void) {
     OK_INT(sse_client_state(&cl), SSE_STATE_OPEN);
   }
 
+  /* an event whose type does not fit event_buf is dropped entirely (never
+   * delivered as "message") and surfaced as SSE_ERR_EVENT_TYPE_INVALID;
+   * the stream continues and the dropped event's id still advances
+   * Last-Event-ID */
+  fresh();
+  mock.n_conns = 1;
+  sse_conn(0, 200, "text/event-stream",
+           "id: 41\nevent: "
+           "a234567890a234567890a234567890a234567890a234567890a234567890a2345"
+           "\ndata: dropme\n\nid: 42\ndata: ok\n\n",
+           SSE_READ_TIMEOUT);
+  {
+    sse_client_config_t cfg = base_cfg(); /* event_buf is 64: 66-char name overflows */
+    OK_INT(sse_client_init(&cl, &cfg), 0);
+    pump(10);
+    OK(strstr(clog, "err(6,0,1,0)\n") != NULL); /* 6 == SSE_ERR_EVENT_TYPE_INVALID */
+    OK(strstr(clog, "dropme") == NULL);
+    OK(strstr(clog, "msg(message,42,ok)\n") != NULL);
+    OK_INT(sse_client_state(&cl), SSE_STATE_OPEN);
+    OK_STR(sse_client_last_event_id(&cl), "42");
+  }
+
+  /* a data-oversized event also advances Last-Event-ID, so a reconnect
+   * resumes past it instead of replaying an event that can never fit */
+  fresh();
+  mock.n_conns = 1;
+  sse_conn(0, 200, "text/event-stream", NULL, SSE_READ_TIMEOUT);
+  {
+    static char big2[1200];
+    memset(big2, 'b', sizeof big2);
+    memcpy(big2, "id: 77\ndata: ", 13);
+    memcpy(big2 + sizeof big2 - 3, "\n\n", 3); /* includes NUL */
+    mock.conns[0].chunks[0] = big2;
+    sse_client_config_t cfg = base_cfg(); /* data_buf is 1024: overflow */
+    OK_INT(sse_client_init(&cl, &cfg), 0);
+    pump(20);
+    OK(strstr(clog, "err(5,0,1,0)\n") != NULL); /* 5 == SSE_ERR_MESSAGE_TOO_LARGE */
+    OK(strstr(clog, "msg(") == NULL);
+    OK_INT(sse_client_state(&cl), SSE_STATE_OPEN);
+    OK_STR(sse_client_last_event_id(&cl), "77");
+  }
+
   /* request_stop from "another task": next poll closes cleanly */
   fresh();
   mock.n_conns = 1;

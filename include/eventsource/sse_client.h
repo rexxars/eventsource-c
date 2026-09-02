@@ -39,7 +39,10 @@ typedef enum {
   SSE_ERR_BAD_CONTENT_TYPE,
   SSE_ERR_SERVER_STOP,      /* HTTP 204 */
   SSE_ERR_IDLE_TIMEOUT,
-  SSE_ERR_MESSAGE_TOO_LARGE /* informational: stream continues */
+  SSE_ERR_MESSAGE_TOO_LARGE, /* informational: event dropped, stream continues */
+  SSE_ERR_EVENT_TYPE_INVALID /* informational: event type did not fit event_buf
+                                (or contained NUL); event dropped, stream
+                                continues */
 } sse_error_reason_t;
 
 typedef struct {

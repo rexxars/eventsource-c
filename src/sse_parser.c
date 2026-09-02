@@ -9,11 +9,15 @@ static void emit_perr(sse_parser_t *p, sse_parse_error_t err) {
 }
 
 static void dispatch_block(sse_parser_t *p) {
-  if (!p->data_overflow) {
-    if (p->has_id) {
-      p->buf.id_buf[p->id_len] = '\0';
-      if (p->cb.on_id) p->cb.on_id(p->cb.userdata, p->buf.id_buf, p->id_len);
-    }
+  /* The id commits even when the block was discarded: Last-Event-ID tracks
+   * stream position, and buffer sizes are fixed, so replaying a discarded
+   * event on resume would just discard it again. Data loss is reported
+   * through on_error instead. */
+  if (p->has_id) {
+    p->buf.id_buf[p->id_len] = '\0';
+    if (p->cb.on_id) p->cb.on_id(p->cb.userdata, p->buf.id_buf, p->id_len);
+  }
+  if (!p->block_discarded) {
     if (p->data_lines > 0 && p->cb.on_event) {
       size_t n = p->data_len - 1; /* strip trailing '\n' */
       p->buf.data_buf[n] = '\0';
@@ -32,10 +36,9 @@ static void dispatch_block(sse_parser_t *p) {
   }
   p->data_len = 0;
   p->data_lines = 0;
-  p->data_overflow = false;
+  p->block_discarded = false;
   p->event_len = 0;
   p->has_event = false;
-  p->event_invalid = false;
   p->id_len = 0;
   p->has_id = false;
   p->id_invalid = false;
@@ -45,7 +48,6 @@ static void start_value(sse_parser_t *p) {
   switch (p->field) {
     case F_EVENT:
       p->event_len = 0;
-      p->event_invalid = false;
       break;
     case F_ID:
       p->id_len = 0;
@@ -61,35 +63,39 @@ static void start_value(sse_parser_t *p) {
   }
 }
 
-static void overflow_block(sse_parser_t *p) {
-  if (!p->data_overflow) {
-    p->data_overflow = true;
-    emit_perr(p, SSE_PARSE_ERR_DATA_TOO_LARGE);
+/* Marks the current block discarded: its event will not be delivered.
+ * Its id still commits at dispatch and retry fields remain honored. The
+ * error fires once per block (the first cause wins). */
+static void discard_block(sse_parser_t *p, sse_parse_error_t err) {
+  if (!p->block_discarded) {
+    p->block_discarded = true;
+    emit_perr(p, err);
   }
 }
 
 static void value_byte(sse_parser_t *p, uint8_t b) {
   switch (p->field) {
     case F_DATA:
-      if (p->data_overflow) return;
+      if (p->block_discarded) return;
       if (p->data_len == p->buf.data_buf_len) {
-        overflow_block(p);
+        discard_block(p, SSE_PARSE_ERR_DATA_TOO_LARGE);
         return;
       }
       p->buf.data_buf[p->data_len++] = (char)b;
       return;
     case F_EVENT:
-      if (p->event_invalid) return;
+      if (p->block_discarded) return;
       if (b == 0) {
         /* The public event type is a NUL-terminated string with no length:
-         * accepting "admin\0evil" would be observable as "admin". */
-        p->event_invalid = true;
-        emit_perr(p, SSE_PARSE_ERR_EVENT_TYPE_INVALID);
+         * accepting "admin\0evil" would be observable as "admin". An event
+         * whose type cannot be represented cannot be dispatched correctly
+         * by anyone, so the whole block is discarded rather than delivered
+         * under the default type. */
+        discard_block(p, SSE_PARSE_ERR_EVENT_TYPE_INVALID);
         return;
       }
       if (p->event_len + 1 >= p->buf.event_buf_len) {
-        p->event_invalid = true;
-        emit_perr(p, SSE_PARSE_ERR_EVENT_TYPE_TOO_LARGE);
+        discard_block(p, SSE_PARSE_ERR_EVENT_TYPE_TOO_LARGE);
         return;
       }
       p->buf.event_buf[p->event_len++] = (char)b;
@@ -124,9 +130,9 @@ static void value_byte(sse_parser_t *p, uint8_t b) {
 static void commit_value(sse_parser_t *p) {
   switch (p->field) {
     case F_DATA:
-      if (!p->data_overflow) {
+      if (!p->block_discarded) {
         if (p->data_len == p->buf.data_buf_len) {
-          overflow_block(p);
+          discard_block(p, SSE_PARSE_ERR_DATA_TOO_LARGE);
         } else {
           p->buf.data_buf[p->data_len++] = '\n';
           p->data_lines++;
@@ -134,12 +140,7 @@ static void commit_value(sse_parser_t *p) {
       }
       break;
     case F_EVENT:
-      if (p->event_invalid) {
-        p->event_len = 0;
-        p->has_event = false;
-      } else {
-        p->has_event = p->event_len > 0; /* empty value resets to none */
-      }
+      p->has_event = p->event_len > 0; /* empty value resets to none */
       break;
     case F_ID:
       if (p->id_invalid) {
