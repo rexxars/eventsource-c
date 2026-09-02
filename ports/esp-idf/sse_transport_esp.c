@@ -218,6 +218,13 @@ static int esp_read_fn(void *vctx, void *buf, size_t len, uint32_t timeout_ms) {
   size_t want = len > (size_t)INT_MAX ? (size_t)INT_MAX : len;
   int r = esp_http_client_read(t->hc, buf, (int)want);
   if (r > 0) return r;
+  if (r == -ESP_ERR_HTTP_EAGAIN) {
+    /* "call is timed-out before any data was ready" (esp_http_client.h).
+     * This is how a mid-stream read timeout is reported on real lwIP: not
+     * as 0, not via errno. Found on hardware against a quiet SSE stream,
+     * where every silent read_timeout window became a reconnect. */
+    return SSE_READ_TIMEOUT;
+  }
   if (r == 0) {
     /* 0 can mean EOF or (for some transports) a poll timeout. Chunked SSE
      * streams report completion explicitly; trust that first. */
