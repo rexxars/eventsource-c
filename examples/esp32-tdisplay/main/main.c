@@ -78,9 +78,18 @@ static void render(void) {
   snprintf(line, sizeof line, "type: %s", st.last_event);
   display_text(2, 58, 1, COL_YELLOW, line);
   {
-    char idpart[27]; /* 30-column display minus the "id: " prefix */
-    ellipsize(idpart, 26, st.last_id);
-    snprintf(line, sizeof line, "id: %s", idpart);
+    /* Wikimedia-style ids are mostly-constant JSON where only an embedded
+     * timestamp changes; show that slice so the line visibly updates. */
+    const char *ts = strstr(st.last_id, "\"timestamp\":");
+    if (ts) {
+      ts += strlen("\"timestamp\":");
+      snprintf(line, sizeof line, "id: ...%.*s...",
+               (int)strspn(ts, "0123456789"), ts);
+    } else {
+      char idpart[27]; /* 30-column display minus the "id: " prefix */
+      ellipsize(idpart, 26, st.last_id);
+      snprintf(line, sizeof line, "id: %s", idpart);
+    }
     display_text(2, 70, 1, COL_GREY, line);
   }
   /* last_data wrapped over three 28-char rows */
