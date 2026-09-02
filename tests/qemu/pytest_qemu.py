@@ -65,6 +65,14 @@ def expect_eof_scenario(dut, name):
 def test_sse_transport_qemu(dut):
     dut.expect("QEMU-TEST net up", timeout=120)
 
+    # Quiet stream: headers complete, 3 s of silence, then the event. The
+    # mid-stream read timeouts in between must not become transport errors
+    # (regression: -ESP_ERR_HTTP_EAGAIN was mapped to SSE_READ_ERROR). The
+    # single open(0) plus done proves no reconnect happened.
+    dut.expect("QEMU-TEST open name=silent count=0", timeout=30)
+    dut.expect("QEMU-TEST msg name=silent id=1 data=late 1", timeout=30)
+    dut.expect("QEMU-TEST done name=silent", timeout=30)
+
     expect_eof_scenario(dut, "eof")         # close-delimited stream
     expect_eof_scenario(dut, "eofchunked")  # chunked stream
 

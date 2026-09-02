@@ -169,6 +169,10 @@ void app_main(void) {
 
   static const char *echo_headers[] = {"X-Test: qemu-marker", NULL};
 
+  /* Headers, then 3 s of silence, then events: mid-stream read timeouts
+   * (esp_http_client returns -ESP_ERR_HTTP_EAGAIN) must map to
+   * SSE_READ_TIMEOUT, not a transport error and reconnect. */
+  run_scenario("silent", FIXTURE_BASE "/silent", NULL, one_msg);
   /* Close-delimited EOF + Last-Event-ID resume across the reconnect. */
   run_scenario("eof", FIXTURE_BASE "/limited", NULL, six_msgs);
   /* Chunked EOF (terminating zero chunk). */
