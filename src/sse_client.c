@@ -56,9 +56,17 @@ static void bridge_on_event(void *ud, const sse_parser_event_t *ev) {
 static void bridge_on_perr(void *ud, sse_parse_error_t err) {
   sse_client_t *c = ud;
   if (c->state != SSE_STATE_OPEN) return; /* close() during dispatch stops it */
-  if (err != SSE_PARSE_ERR_DATA_TOO_LARGE) return;
+  sse_error_reason_t reason;
+  if (err == SSE_PARSE_ERR_DATA_TOO_LARGE) {
+    reason = SSE_ERR_MESSAGE_TOO_LARGE;
+  } else if (err == SSE_PARSE_ERR_EVENT_TYPE_TOO_LARGE ||
+             err == SSE_PARSE_ERR_EVENT_TYPE_INVALID) {
+    reason = SSE_ERR_EVENT_TYPE_INVALID;
+  } else {
+    return; /* other parse errors are dropped-field noise, not data loss */
+  }
   if (!c->cfg.callbacks.on_error) return;
-  sse_error_t e = {SSE_ERR_MESSAGE_TOO_LARGE, 0, true, 0}; /* stream continues */
+  sse_error_t e = {reason, 0, true, 0}; /* informational: stream continues */
   c->cfg.callbacks.on_error(c->cfg.callbacks.userdata, &e);
 }
 
