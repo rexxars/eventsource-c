@@ -24,13 +24,16 @@ jobs:
 
   esp-idf-build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example: [examples/esp32, examples/esp32-tdisplay]
     steps:
       - uses: actions/checkout@v4
       - uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.2
           target: esp32
-          path: examples/esp32
+          path: ${{ matrix.example }}
 
   esp-qemu-test:
     runs-on: ubuntu-latest
