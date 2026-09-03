@@ -233,7 +233,9 @@ void app_main(void) {
   ESP_ERROR_CHECK(nvs_flash_init());
   display_init();
 
-  snprintf(st.wifi, sizeof st.wifi, "wifi: joining %.14s...",
+  /* "wifi: joining " (14) + 10 + "..." + NUL fills st.wifi exactly; a wider
+   * precision trips -Werror=format-truncation for SSIDs over 10 chars. */
+  snprintf(st.wifi, sizeof st.wifi, "wifi: joining %.10s...",
            CONFIG_SSE_EXAMPLE_WIFI_SSID);
   snprintf(st.sse, sizeof st.sse, "sse: waiting for wifi");
   st.sse_color = COL_GREY;
