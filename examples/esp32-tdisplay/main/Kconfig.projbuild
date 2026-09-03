@@ -1,0 +1,11 @@
+menu "SSE example configuration"
+config SSE_EXAMPLE_WIFI_SSID
+    string "WiFi SSID"
+    default "myssid"
+config SSE_EXAMPLE_WIFI_PASSWORD
+    string "WiFi password"
+    default "mypassword"
+config SSE_EXAMPLE_URL
+    string "SSE stream URL"
+    default "https://example.com/stream"
+endmenu

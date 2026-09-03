@@ -6,3 +6,4 @@ dependencies.lock
 sdkconfig
 sdkconfig.old
 node_modules/
+.cache/

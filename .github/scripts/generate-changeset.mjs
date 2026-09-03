@@ -41,6 +41,7 @@ const RELEVANT_PATHS = [
   'include/',
   'ports/esp-idf/',
   'examples/esp32/',
+  'examples/esp32-tdisplay/',
   'CMakeLists.txt',
   'idf_component.yml',
 ]

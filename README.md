@@ -86,7 +86,7 @@ void start_stream(void) {
 }
 ```
 
-See `examples/esp32` for a complete application including Wi-Fi setup.
+See `examples/esp32` for a complete application including Wi-Fi setup, and `examples/esp32-tdisplay` for a LilyGO T-Display variant that renders live stream status on the built-in screen.
 
 ## Usage (POSIX)
 
